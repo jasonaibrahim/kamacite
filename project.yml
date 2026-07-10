@@ -1,0 +1,118 @@
+name: vw
+options:
+  bundleIdPrefix: com.xylophonexyz
+  deploymentTarget:
+    macOS: "15.0"
+  createIntermediateGroups: true
+
+packages:
+  VWEngine:
+    path: Packages/VWEngine
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    MACOSX_DEPLOYMENT_TARGET: "15.0"
+    DEAD_CODE_STRIPPING: YES
+    CODE_SIGN_STYLE: Manual
+    CODE_SIGN_IDENTITY: "-"
+    ENABLE_HARDENED_RUNTIME: NO
+    ENABLE_USER_SCRIPT_SANDBOXING: NO
+  configs:
+    Release:
+      SWIFT_OPTIMIZATION_LEVEL: "-O"
+      SWIFT_COMPILATION_MODE: wholemodule
+
+targets:
+  vw:
+    type: application
+    platform: macOS
+    sources:
+      - App/Sources
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.xylophonexyz.vw
+        PRODUCT_NAME: vw
+        SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor
+    dependencies:
+      - package: VWEngine
+        product: VWViewer
+      - target: vw-cli
+        embed: false
+    info:
+      path: App/Info.plist
+      properties:
+        CFBundleName: vw
+        CFBundleDisplayName: vw
+        CFBundleShortVersionString: "0.1.0"
+        CFBundleVersion: "1"
+        LSMinimumSystemVersion: "15.0"
+        LSApplicationCategoryType: public.app-category.productivity
+        NSPrincipalClass: NSApplication
+        NSHighResolutionCapable: true
+        NSSupportsAutomaticGraphicsSwitching: true
+        NSHumanReadableCopyright: "© 2026 xylophonexyz"
+        CFBundleDocumentTypes:
+          # No system markdown UTI exists (verified against this machine's LS database).
+          # Import the canonical community UTI and claim the variants other apps declare,
+          # so Finder double-click and "Open With" work regardless of which app won the
+          # extension binding. Referencing a UTI another app declares is legal and inert
+          # if undeclared.
+          - CFBundleTypeName: Markdown Document
+            CFBundleTypeRole: Viewer
+            LSHandlerRank: Default
+            LSItemContentTypes:
+              - net.daringfireball.markdown
+              - public.markdown
+              - net.ia.markdown
+              - com.unknown.md
+          - CFBundleTypeName: Plain Text
+            CFBundleTypeRole: Viewer
+            LSHandlerRank: Alternate
+            LSItemContentTypes:
+              - public.plain-text
+        UTImportedTypeDeclarations:
+          - UTTypeIdentifier: net.daringfireball.markdown
+            UTTypeDescription: Markdown Document
+            UTTypeConformsTo:
+              - public.plain-text
+            UTTypeTagSpecification:
+              public.filename-extension:
+                - md
+                - markdown
+                - mdown
+                - mkdn
+                - mkd
+                - mdwn
+                - markdn
+              public.mime-type:
+                - text/markdown
+                - text/x-markdown
+    postBuildScripts:
+      - name: Embed vw CLI helper
+        script: |
+          set -e
+          HELPERS="${TARGET_BUILD_DIR}/${CONTENTS_FOLDER_PATH}/Helpers"
+          mkdir -p "$HELPERS"
+          cp -f "${TARGET_BUILD_DIR}/vw-cli" "$HELPERS/vw"
+          # The helper must carry its own signature before the outer bundle is sealed.
+          codesign --force --sign - "$HELPERS/vw"
+        basedOnDependencyAnalysis: false
+
+  vw-cli:
+    type: tool
+    platform: macOS
+    sources:
+      - CLI/Sources
+    settings:
+      base:
+        PRODUCT_NAME: vw-cli
+        SWIFT_DEFAULT_ACTOR_ISOLATION: nonisolated
+
+schemes:
+  vw:
+    build:
+      targets:
+        vw: all
+    run:
+      config: Release
