@@ -2,7 +2,7 @@ XCODEGEN ?= xcodegen
 DERIVED  := build
 APP      := $(DERIVED)/Build/Products/Release/vw.app
 
-.PHONY: generate build run test bench install dev-link clean
+.PHONY: generate build run test bench install dev-link clean spike spike-dump
 
 generate:
 	$(XCODEGEN) generate
@@ -29,3 +29,11 @@ dev-link: build
 
 clean:
 	rm -rf $(DERIVED) vw.xcodeproj
+
+# P1 text-on-GPU spike: window = Metal vs NSTextView side-by-side
+# (a: animate, l: theme, q: quit); dump = PNGs + parity stats.
+spike:
+	swift run --package-path Spikes/TextOnGPU -c release TextOnGPU
+
+spike-dump:
+	swift run --package-path Spikes/TextOnGPU -c release TextOnGPU --dump Spikes/TextOnGPU/out

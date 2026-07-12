@@ -9,6 +9,9 @@ DerivedData/
 .swiftpm/
 xcuserdata/
 
+# Spike outputs (PNG dumps from `make spike-dump`)
+Spikes/TextOnGPU/out/
+
 # Bench: large corpus files are generated (bench/gen_corpus.py); results are per-machine
 bench/corpus/large.md
 bench/corpus/huge.md
