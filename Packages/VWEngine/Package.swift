@@ -24,14 +24,14 @@ let package = Package(
         .target(name: "VWText", dependencies: ["VWCore", "VWStyle"]),
         .target(name: "VWLayout", dependencies: ["VWText"]),
         .target(name: "VWRender", dependencies: ["VWText", "VWLayout"]),
-        .target(name: "VWInteraction", dependencies: ["VWLayout"]),
+        .target(name: "VWInteraction", dependencies: ["VWCore", "VWStyle", "VWText", "VWLayout"]),
         .target(
             name: "VWViewer",
             dependencies: ["VWParse", "VWStyle", "VWText", "VWLayout", "VWRender", "VWInteraction"]
         ),
         .testTarget(
             name: "VWEngineTests",
-            dependencies: ["VWCore", "VWParse", "VWStyle", "VWText", "VWLayout", "VWRender"],
+            dependencies: ["VWCore", "VWParse", "VWStyle", "VWText", "VWLayout", "VWRender", "VWInteraction"],
             resources: [.copy("Goldens")]
         ),
     ],

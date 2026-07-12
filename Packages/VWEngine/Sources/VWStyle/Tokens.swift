@@ -10,6 +10,8 @@ public enum ColorToken: Sendable, Hashable, CaseIterable {
     case pageBackground
     case codeBackground
     case rule
+    /// Selected-text background, painted below glyphs.
+    case selection
 }
 
 public struct RunTraits: OptionSet, Sendable, Hashable {

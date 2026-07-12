@@ -3,9 +3,9 @@ import VWCore
 import VWStyle
 import VWText
 
-// P2: eager layout — every block shaped up front. P3 replaces the eager loop
-// with the BlockGeometryTree + viewport-only LayoutStore; layoutBlock stays a
-// pure function either way.
+// BlockLayout is the unit the renderer consumes; DocumentLayout is a fully
+// materialized slice of the document (a frame's visible blocks, or — for tests
+// and snapshots — the whole thing via layoutDocument()).
 
 public struct BlockLayout: Sendable {
     public let flatIndex: Int
@@ -21,6 +21,21 @@ public struct BlockLayout: Sendable {
     public let shaped: ShapedBlockText
 
     public var maxYPts: CGFloat { yPts + heightPts }
+
+    public init(
+        flatIndex: Int, id: BlockID, kind: FlatBlockKind, yPts: CGFloat,
+        heightPts: CGFloat, textInsetPts: CGPoint, background: BackgroundQuad?,
+        shaped: ShapedBlockText
+    ) {
+        self.flatIndex = flatIndex
+        self.id = id
+        self.kind = kind
+        self.yPts = yPts
+        self.heightPts = heightPts
+        self.textInsetPts = textInsetPts
+        self.background = background
+        self.shaped = shaped
+    }
 }
 
 public struct BackgroundQuad: Sendable {
@@ -46,6 +61,9 @@ public struct DocumentLayout: Sendable {
     }
 }
 
+/// Eager whole-document layout: the lazy path with everything forced exact.
+/// Tests and snapshots use this; the app never should.
+@MainActor
 public func layoutDocument(
     _ document: FlatDocument,
     fonts: FontTable,
@@ -53,70 +71,15 @@ public func layoutDocument(
     contentWidth: CGFloat,
     scale: CGFloat
 ) -> DocumentLayout {
-    var blocks: [BlockLayout] = []
-    blocks.reserveCapacity(document.blocks.count)
-    var y: CGFloat = 0
-
-    for (index, flat) in document.blocks.enumerated() {
-        if !blocks.isEmpty {
-            y += spacingBefore(flat.kind, metrics: metrics)
-        }
-
-        let indent = CGFloat(flat.indentLevel) * metrics.indentWidth
-        let padding = flat.kind == .codeBlock ? metrics.codeBlockPadding : 0
-        let textWidth = max(40, contentWidth - indent - padding * 2)
-        let shaped = shapeBlock(flat, fonts: fonts, width: textWidth, scale: scale)
-
-        let height: CGFloat
-        var background: BackgroundQuad?
-        switch flat.kind {
-        case .rule:
-            height = metrics.ruleThickness
-            background = BackgroundQuad(
-                rectPts: CGRect(x: indent, y: 0, width: max(0, contentWidth - indent), height: height),
-                color: .rule
-            )
-        case .codeBlock:
-            height = shaped.heightPts + padding * 2
-            background = BackgroundQuad(
-                rectPts: CGRect(x: indent, y: 0, width: max(0, contentWidth - indent), height: height),
-                color: .codeBackground
-            )
-        default:
-            height = shaped.heightPts + padding * 2
-        }
-
-        blocks.append(BlockLayout(
-            flatIndex: index,
-            id: flat.id,
-            kind: flat.kind,
-            yPts: y,
-            heightPts: height,
-            textInsetPts: CGPoint(x: indent + padding, y: padding),
-            background: background,
-            shaped: shaped
-        ))
-        y += height + spacingAfter(flat.kind, metrics: metrics)
-    }
-
-    return DocumentLayout(blocks: blocks, contentWidthPts: contentWidth, contentHeightPts: y)
-}
-
-private func spacingBefore(_ kind: FlatBlockKind, metrics: Metrics) -> CGFloat {
-    switch kind {
-    case .heading: metrics.headingSpacingBefore
-    case .rule: metrics.ruleSpacing
-    default: 0
-    }
-}
-
-private func spacingAfter(_ kind: FlatBlockKind, metrics: Metrics) -> CGFloat {
-    switch kind {
-    case .heading: metrics.headingSpacingAfter
-    case .paragraph: metrics.paragraphSpacing
-    case .codeBlock: metrics.codeBlockSpacing
-    case .listItem: metrics.listItemSpacing
-    case .tableRow: 2
-    case .rule: metrics.ruleSpacing
-    }
+    let lazy = LazyLayout(
+        document: document, fonts: fonts, metrics: metrics,
+        contentWidth: contentWidth, scale: scale
+    )
+    lazy.prepare(docRange: 0..<CGFloat.greatestFiniteMagnitude, anchorY: 0)
+    let blocks = lazy.placedBlocks(in: 0..<CGFloat.greatestFiniteMagnitude)
+    return DocumentLayout(
+        blocks: blocks,
+        contentWidthPts: contentWidth,
+        contentHeightPts: lazy.contentHeightPts
+    )
 }

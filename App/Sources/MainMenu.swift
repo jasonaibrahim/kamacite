@@ -47,6 +47,12 @@ enum MainMenuBuilder {
 
         let editMenu = NSMenu(title: "Edit")
         editMenu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        // ⌘⇧C — the byte-exact markdown source slice (DocumentEngineView).
+        let copySource = editMenu.addItem(
+            withTitle: "Copy as Markdown Source",
+            action: NSSelectorFromString("copyMarkdownSource:"),
+            keyEquivalent: "C")
+        copySource.keyEquivalentModifierMask = [.command, .shift]
         editMenu.addItem(
             withTitle: "Select All",
             action: #selector(NSText.selectAll(_:)),

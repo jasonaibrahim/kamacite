@@ -15,6 +15,7 @@ public final class FontTable: @unchecked Sendable {
     private let metrics: Metrics
     private let lock = NSLock()
     private var cache: [Key: CTFont] = [:]
+    private var averageWidthCache: [FontClass: CGFloat] = [:]
 
     public init(metrics: Metrics) {
         self.metrics = metrics
@@ -80,6 +81,30 @@ public final class FontTable: @unchecked Sendable {
         }
 
         return base
+    }
+
+    /// Mean advance of typical prose in this class, measured once by CoreText.
+    /// Feeds height ESTIMATION only — never exact layout.
+    public func averageCharacterWidth(for fontClass: FontClass) -> CGFloat {
+        lock.lock()
+        if let cached = averageWidthCache[fontClass] {
+            lock.unlock()
+            return cached
+        }
+        lock.unlock()
+
+        let font = font(for: fontClass, traits: [])
+        let sample = "the quick brown Fox jumps over 42 lazy dogs, mostly."
+        let attributed = NSAttributedString(string: sample, attributes: [
+            NSAttributedString.Key(kCTFontAttributeName as String): font
+        ])
+        let line = CTLineCreateWithAttributedString(attributed)
+        let width = CGFloat(CTLineGetTypographicBounds(line, nil, nil, nil)) / CGFloat(sample.count)
+
+        lock.lock()
+        averageWidthCache[fontClass] = width
+        lock.unlock()
+        return width
     }
 
     /// Fixed line slot for a block's base font: uniform vertical rhythm even

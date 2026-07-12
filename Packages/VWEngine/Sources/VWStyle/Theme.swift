@@ -28,6 +28,7 @@ public struct Theme: Sendable, Equatable {
         .pageBackground: SIMD4(0.118, 0.118, 0.125, 1),
         .codeBackground: SIMD4(0.165, 0.165, 0.175, 1),
         .rule: SIMD4(0.30, 0.30, 0.32, 1),
+        .selection: SIMD4(0.22, 0.36, 0.55, 1),
     ])
 
     public static let light = Theme(name: "light", isDark: false, palette: [
@@ -38,6 +39,7 @@ public struct Theme: Sendable, Equatable {
         .pageBackground: SIMD4(1, 1, 1, 1),
         .codeBackground: SIMD4(0.955, 0.955, 0.965, 1),
         .rule: SIMD4(0.84, 0.84, 0.86, 1),
+        .selection: SIMD4(0.70, 0.84, 1.0, 1),
     ])
 }
 

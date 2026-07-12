@@ -57,11 +57,14 @@ public final class DocumentRenderer {
 
     /// Draw `layout` into `target`. `originPts` is the content-column origin in
     /// view space (centering inset minus scroll offset), points.
+    /// `selectionRects` are content-column-relative document rects painted
+    /// below glyphs (above block backgrounds).
     public func encode(
         layout: DocumentLayout,
         theme: Theme,
         originPts: CGPoint,
         scale: CGFloat,
+        selectionRects: [CGRect] = [],
         target: MTLTexture,
         commandBuffer: MTLCommandBuffer
     ) {
@@ -141,6 +144,22 @@ public final class DocumentRenderer {
                         color: theme.color(decoration.color)
                     ))
                 }
+            }
+        }
+
+        // Selection paints over block backgrounds, under glyphs — appended
+        // after backgrounds so instance order gives the painter's order.
+        if !selectionRects.isEmpty {
+            let selectionColor = theme.color(.selection)
+            for rect in selectionRects {
+                let top = originDev.y + Float((rect.minY * scale).rounded())
+                let height = Float((rect.height * scale).rounded())
+                guard top <= viewportHeightDev, top + height >= 0 else { continue }
+                solidsBelow.append(SolidQuad(
+                    origin: SIMD2(originDev.x + Float((rect.minX * scale).rounded()), top),
+                    size: SIMD2(Float((rect.width * scale).rounded()), height),
+                    color: selectionColor
+                ))
             }
         }
 

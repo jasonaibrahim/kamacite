@@ -17,14 +17,30 @@ import VWStyle
 public struct ShapedBlockText: Sendable {
     public let lines: [ShapedTextLine]
     public let lineHeightPts: CGFloat
+    /// The exact string the block was shaped from (concatenated styled runs) —
+    /// the coordinate space of every UTF-16 offset below, and what selection
+    /// copies. Retained for every laid-out block; the lazy store bounds it to
+    /// the viewport window.
+    public let text: String
 
     public var heightPts: CGFloat { CGFloat(lines.count) * lineHeightPts }
+    public var utf16Length: Int { lines.last.map { $0.utf16Range.location + $0.utf16Range.length } ?? 0 }
 
-    public static let empty = ShapedBlockText(lines: [], lineHeightPts: 0)
+    public static let empty = ShapedBlockText(lines: [], lineHeightPts: 0, text: "")
 
-    public init(lines: [ShapedTextLine], lineHeightPts: CGFloat) {
+    public init(lines: [ShapedTextLine], lineHeightPts: CGFloat, text: String) {
         self.lines = lines
         self.lineHeightPts = lineHeightPts
+        self.text = text
+    }
+}
+
+/// CTLine is immutable and thread-safe.
+public struct LineRef: @unchecked Sendable {
+    public let line: CTLine
+
+    public init(_ line: CTLine) {
+        self.line = line
     }
 }
 
@@ -34,11 +50,23 @@ public struct ShapedTextLine: Sendable {
     public let runs: [ShapedGlyphRun]
     /// Non-glyph ink (strikethrough segments), points, block-text-relative.
     public let decorations: [LineDecoration]
+    /// Retained for caret math: CTLineGetStringIndexForPosition /
+    /// CTLineGetOffsetForStringIndex, in the block string's UTF-16 space.
+    public let ctLine: LineRef
+    /// This line's slice of the block string (UTF-16 location/length).
+    public let utf16Range: (location: Int, length: Int)
+    public let widthPts: CGFloat
 
-    public init(baselineDev: CGFloat, runs: [ShapedGlyphRun], decorations: [LineDecoration]) {
+    public init(
+        baselineDev: CGFloat, runs: [ShapedGlyphRun], decorations: [LineDecoration],
+        ctLine: LineRef, utf16Range: (location: Int, length: Int), widthPts: CGFloat
+    ) {
         self.baselineDev = baselineDev
         self.runs = runs
         self.decorations = decorations
+        self.ctLine = ctLine
+        self.utf16Range = utf16Range
+        self.widthPts = widthPts
     }
 }
 
@@ -99,16 +127,18 @@ public func shapeBlock(
         let ctLine = CTTypesetterCreateLine(typesetter, CFRange(location: start, length: count))
         let baselinePts = CGFloat(lines.count) * slot.height + slot.ascent
         lines.append(extractLine(
-            ctLine, block: block, baselinePts: baselinePts, scale: scale
+            ctLine, block: block, baselinePts: baselinePts, scale: scale,
+            utf16Range: (start, count)
         ))
         start += count
     }
 
-    return ShapedBlockText(lines: lines, lineHeightPts: slot.height)
+    return ShapedBlockText(lines: lines, lineHeightPts: slot.height, text: attributed.string)
 }
 
 private func extractLine(
-    _ ctLine: CTLine, block: FlatBlock, baselinePts: CGFloat, scale: CGFloat
+    _ ctLine: CTLine, block: FlatBlock, baselinePts: CGFloat, scale: CGFloat,
+    utf16Range: (location: Int, length: Int)
 ) -> ShapedTextLine {
     let baselineDev = (baselinePts * scale).rounded()
     var runs: [ShapedGlyphRun] = []
@@ -157,7 +187,14 @@ private func extractLine(
         }
     }
 
-    return ShapedTextLine(baselineDev: baselineDev, runs: runs, decorations: decorations)
+    return ShapedTextLine(
+        baselineDev: baselineDev,
+        runs: runs,
+        decorations: decorations,
+        ctLine: LineRef(ctLine),
+        utf16Range: utf16Range,
+        widthPts: CGFloat(CTLineGetTypographicBounds(ctLine, nil, nil, nil))
+    )
 }
 
 private func styledRun(for ctRun: CTRun, in block: FlatBlock) -> StyledRun? {
