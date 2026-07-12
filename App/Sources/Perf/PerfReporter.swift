@@ -64,10 +64,11 @@ final class PerfReporter {
     }
 
     func presented(_ trace: OpenTrace) {
-        // VW_SCROLL_BENCH keeps the process alive: the view runs its scroll
-        // benchmark after first present and exits itself.
-        let scrollBench = ProcessInfo.processInfo.environment["VW_SCROLL_BENCH"] == "1"
-        defer { if benchMode && !scrollBench { exit(0) } }
+        // These modes keep the process alive past first present; the view
+        // finishes its work (scroll benchmark / settled frame dump) and exits.
+        let environment = ProcessInfo.processInfo.environment
+        let deferredExit = environment["VW_SCROLL_BENCH"] == "1" || environment["VW_DUMP_SETTLED"] == "1"
+        defer { if benchMode && !deferredExit { exit(0) } }
         guard enabled else { return }
 
         var rows: [(name: String, ms: Double)] = []

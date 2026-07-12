@@ -16,15 +16,16 @@ public struct BlockLayout: Sendable {
     public let heightPts: CGFloat
     /// Where the shaped text sits inside the block (indent + padding), points.
     public let textInsetPts: CGPoint
-    /// Painted below the text (code background, rule ink), block-relative.
-    public let background: BackgroundQuad?
+    /// Painted below the text (code background, quote bars, rule ink),
+    /// block-relative, in array order.
+    public let backgrounds: [BackgroundQuad]
     public let shaped: ShapedBlockText
 
     public var maxYPts: CGFloat { yPts + heightPts }
 
     public init(
         flatIndex: Int, id: BlockID, kind: FlatBlockKind, yPts: CGFloat,
-        heightPts: CGFloat, textInsetPts: CGPoint, background: BackgroundQuad?,
+        heightPts: CGFloat, textInsetPts: CGPoint, backgrounds: [BackgroundQuad],
         shaped: ShapedBlockText
     ) {
         self.flatIndex = flatIndex
@@ -33,7 +34,7 @@ public struct BlockLayout: Sendable {
         self.yPts = yPts
         self.heightPts = heightPts
         self.textInsetPts = textInsetPts
-        self.background = background
+        self.backgrounds = backgrounds
         self.shaped = shaped
     }
 }

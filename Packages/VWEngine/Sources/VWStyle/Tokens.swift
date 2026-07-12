@@ -12,6 +12,14 @@ public enum ColorToken: Sendable, Hashable, CaseIterable {
     case rule
     /// Selected-text background, painted below glyphs.
     case selection
+    /// Blockquote gutter bar.
+    case quoteBar
+    // Syntax highlighting (color-only by design: same fonts, same advances,
+    // so applying highlights never changes layout).
+    case codeKeyword
+    case codeString
+    case codeComment
+    case codeNumber
 }
 
 public struct RunTraits: OptionSet, Sendable, Hashable {

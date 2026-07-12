@@ -105,6 +105,42 @@ public func selectionRects(
     return rects
 }
 
+// MARK: - Links
+
+/// The styled run containing a UTF-16 offset of the block's rendered text.
+public func styledRun(in block: FlatBlock, atUTF16 offset: Int) -> StyledRun? {
+    var consumed = 0
+    for run in block.runs {
+        let length = (run.text as NSString).length
+        if offset < consumed + length {
+            return run
+        }
+        consumed += length
+    }
+    return nil
+}
+
+/// Link destination under a document point, or nil when the point isn't on
+/// link ink (misses past line ends don't count — hover must be honest).
+public func linkDestination(
+    at docPoint: CGPoint, block: BlockLayout, flat: FlatBlock, contentOriginX: CGFloat = 0
+) -> String? {
+    let shaped = block.shaped
+    guard !shaped.lines.isEmpty else { return nil }
+
+    let localY = docPoint.y - block.yPts - block.textInsetPts.y
+    guard localY >= 0, localY < CGFloat(shaped.lines.count) * shaped.lineHeightPts else { return nil }
+    let lineIndex = min(Int(localY / max(shaped.lineHeightPts, 1)), shaped.lines.count - 1)
+    let line = shaped.lines[lineIndex]
+
+    let localX = docPoint.x - contentOriginX - block.textInsetPts.x
+    guard localX >= -2, localX <= line.widthPts + 2 else { return nil }
+
+    let index = CTLineGetStringIndexForPosition(line.ctLine.line, CGPoint(x: localX, y: 0))
+    guard index != kCFNotFound else { return nil }
+    return styledRun(in: flat, atUTF16: index)?.link
+}
+
 // MARK: - Expansion (double/triple click)
 
 /// UTF-16 range of the word around `offset` in `text`; falls back to the

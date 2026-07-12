@@ -34,7 +34,8 @@ func spacingAfter(_ kind: FlatBlockKind, metrics: Metrics) -> CGFloat {
 
 @MainActor
 public final class LazyLayout {
-    public let document: FlatDocument
+    /// Mutated only by replaceRuns(at:with:) — async syntax highlighting.
+    public private(set) var document: FlatDocument
     public let fonts: FontTable
     public let metrics: Metrics
     public private(set) var contentWidth: CGFloat
@@ -45,7 +46,7 @@ public final class LazyLayout {
         let shaped: ShapedBlockText
         let blockHeightPts: CGFloat
         let textInsetPts: CGPoint
-        let background: BackgroundQuad?
+        let backgrounds: [BackgroundQuad]
     }
     private var cache: [Int: CachedBlock] = [:]
 
@@ -158,32 +159,65 @@ public final class LazyLayout {
         let shaped = shapeBlock(block, fonts: fonts, width: textWidth, scale: scale)
 
         let blockHeight: CGFloat
-        var background: BackgroundQuad?
+        var backgrounds: [BackgroundQuad] = []
         switch block.kind {
         case .rule:
             blockHeight = metrics.ruleThickness
-            background = BackgroundQuad(
+            backgrounds.append(BackgroundQuad(
                 rectPts: CGRect(x: indent, y: 0, width: max(0, contentWidth - indent), height: blockHeight),
                 color: .rule
-            )
+            ))
         case .codeBlock:
             blockHeight = shaped.heightPts + padding * 2
-            background = BackgroundQuad(
+            backgrounds.append(BackgroundQuad(
                 rectPts: CGRect(x: indent, y: 0, width: max(0, contentWidth - indent), height: blockHeight),
                 color: .codeBackground
-            )
+            ))
         default:
             blockHeight = shaped.heightPts + padding * 2
+        }
+
+        // Quote gutter bars, one per nesting level. A bar extends down across
+        // the inter-block gap when the NEXT block is quoted at least as deep —
+        // adjacent quoted blocks read as one continuous quote.
+        if block.quoteDepth > 0 {
+            let nextIndex = index + 1
+            for level in 0..<block.quoteDepth {
+                var barHeight = blockHeight
+                if nextIndex < document.blocks.count {
+                    let next = document.blocks[nextIndex]
+                    if next.quoteDepth > level {
+                        barHeight += spacingAfter(block.kind, metrics: metrics)
+                            + spacingBefore(next.kind, metrics: metrics)
+                    }
+                }
+                backgrounds.insert(BackgroundQuad(
+                    rectPts: CGRect(
+                        x: CGFloat(level) * metrics.indentWidth + 2, y: 0,
+                        width: 3, height: barHeight
+                    ),
+                    color: .quoteBar
+                ), at: 0)
+            }
         }
 
         cache[index] = CachedBlock(
             shaped: shaped,
             blockHeightPts: blockHeight,
             textInsetPts: CGPoint(x: indent + padding, y: padding),
-            background: background
+            backgrounds: backgrounds
         )
         let composite = compositeHeight(index: index, blockHeight: blockHeight)
         return CGFloat(tree.setExact(index, height: Double(composite)))
+    }
+
+    /// Swap a block's styled runs (async syntax highlighting). The text and
+    /// fonts must be identical — only colors may differ — so the cached exact
+    /// height stays valid; the block just re-shapes on its next frame.
+    public func replaceRuns(at index: Int, with runs: [StyledRun]) {
+        guard document.blocks.indices.contains(index) else { return }
+        document.blocks[index].runs = runs
+        cache.removeValue(forKey: index)
     }
 
     private func compositeHeight(index: Int, blockHeight: CGFloat) -> CGFloat {
@@ -229,7 +263,7 @@ public final class LazyLayout {
             yPts: compositeTop + before,
             heightPts: cached.blockHeightPts,
             textInsetPts: cached.textInsetPts,
-            background: cached.background,
+            backgrounds: cached.backgrounds,
             shaped: cached.shaped
         )
     }

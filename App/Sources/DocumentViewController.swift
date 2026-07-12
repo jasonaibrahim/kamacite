@@ -24,6 +24,18 @@ final class DocumentViewController: NSViewController {
         }
         let engine = DocumentEngineView(data: document.data, theme: Self.currentTheme())
         engine.frame = NSRect(x: 0, y: 0, width: 760, height: 900)
+        engine.baseURL = document.url
+        engine.onOpenLink = { url in
+            // Markdown links to markdown files stay in vw; everything else
+            // goes to the system handler.
+            if url.isFileURL,
+               ["md", "markdown", "mdown", "mkdn", "mkd", "mdwn", "markdn"]
+                   .contains(url.pathExtension.lowercased()) {
+                DocumentController.shared.open(url: url)
+            } else {
+                NSWorkspace.shared.open(url)
+            }
+        }
         engineView = engine
         view = engine
     }

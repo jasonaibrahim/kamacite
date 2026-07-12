@@ -29,14 +29,23 @@ Regular **bold** *italic* ***both*** ~~struck~~ `inline code` and \
 
 ## Second heading
 
-- bullet one
+- bullet one wrapping onto a second line to prove the hanging indent keeps \
+wrapped text aligned under the first character
 - bullet two with **bold**
   - nested bullet
+    - third level
 
 1. ordered
 2. list
+10. double-digit marker
+
+- [x] checked task
+- [ ] unchecked task
 
 > A quoted line that reads as secondary text.
+>
+> Second quoted paragraph — the bar must bridge the gap.
+> > Nested quote gets a second bar.
 
 ```swift
 let answer = 42 // mono on a background
@@ -51,6 +60,34 @@ let answer = 42 // mono on a background
 Final paragraph after a rule. Emoji: 🚀 CJK: 日本語.
 """
 
+private let goldenCodeMarkdown = """
+### Highlighted code
+
+```swift
+// Fibonacci, but make it Swift
+func fib(_ n: Int) -> Int {
+    guard n > 1 else { return n }
+    var (a, b) = (0, 1)
+    for _ in 2...n { (a, b) = (b, a + b) }
+    return b
+}
+let label = "fib(10) = \\(fib(10))"
+```
+
+```python
+def load(path: str) -> dict:
+    \"\"\"Read a JSON file.\"\"\"
+    with open(path) as f:  # utf-8 by default
+        return json.load(f)
+
+CACHE_SIZE = 0x400  # 1 KiB
+```
+
+```json
+{"name": "vw", "fast": true, "budget_ms": 8.33, "deps": null}
+```
+"""
+
 @Suite struct SnapshotTests {
     @Test @MainActor func goldenDark() throws {
         try assertSnapshot(name: "golden-dark", theme: .dark)
@@ -60,8 +97,30 @@ Final paragraph after a rule. Emoji: 🚀 CJK: 日本語.
         try assertSnapshot(name: "golden-light", theme: .light)
     }
 
+    /// Highlighting applied synchronously here — same transform the session
+    /// applies async in the app.
+    @Test @MainActor func goldenHighlightedCode() throws {
+        try assertSnapshot(
+            name: "golden-code-dark", theme: .dark, markdown: goldenCodeMarkdown,
+            transform: { document in
+                for index in document.blocks.indices
+                where document.blocks[index].kind == .codeBlock {
+                    guard let language = document.blocks[index].codeLanguage,
+                          let code = document.blocks[index].runs.first?.text,
+                          let runs = highlightCode(code, language: language)
+                    else { continue }
+                    document.blocks[index].runs = runs
+                }
+            }
+        )
+    }
+
     @MainActor
-    private func assertSnapshot(name: String, theme: Theme) throws {
+    private func assertSnapshot(
+        name: String, theme: Theme,
+        markdown: String = goldenMarkdown,
+        transform: ((inout FlatDocument) -> Void)? = nil
+    ) throws {
         guard MTLCreateSystemDefaultDevice() != nil else {
             // Headless CI without a GPU: nothing to verify.
             return
@@ -71,7 +130,8 @@ Final paragraph after a rule. Emoji: 🚀 CJK: 日本語.
         let contentWidth: CGFloat = 600
         let insetPts: CGFloat = 24
 
-        let flat = flatten(parseMarkdown(goldenMarkdown))
+        var flat = flatten(parseMarkdown(markdown))
+        transform?(&flat)
         let fonts = FontTable(metrics: theme.metrics)
         let layout = layoutDocument(
             flat, fonts: fonts, metrics: theme.metrics,

@@ -29,6 +29,11 @@ public struct Theme: Sendable, Equatable {
         .codeBackground: SIMD4(0.165, 0.165, 0.175, 1),
         .rule: SIMD4(0.30, 0.30, 0.32, 1),
         .selection: SIMD4(0.22, 0.36, 0.55, 1),
+        .quoteBar: SIMD4(0.36, 0.36, 0.40, 1),
+        .codeKeyword: SIMD4(1.0, 0.48, 0.70, 1),
+        .codeString: SIMD4(1.0, 0.53, 0.44, 1),
+        .codeComment: SIMD4(0.50, 0.56, 0.60, 1),
+        .codeNumber: SIMD4(0.85, 0.79, 0.49, 1),
     ])
 
     public static let light = Theme(name: "light", isDark: false, palette: [
@@ -40,6 +45,11 @@ public struct Theme: Sendable, Equatable {
         .codeBackground: SIMD4(0.955, 0.955, 0.965, 1),
         .rule: SIMD4(0.84, 0.84, 0.86, 1),
         .selection: SIMD4(0.70, 0.84, 1.0, 1),
+        .quoteBar: SIMD4(0.80, 0.80, 0.83, 1),
+        .codeKeyword: SIMD4(0.68, 0.24, 0.64, 1),
+        .codeString: SIMD4(0.77, 0.10, 0.09, 1),
+        .codeComment: SIMD4(0.36, 0.42, 0.47, 1),
+        .codeNumber: SIMD4(0.15, 0.16, 0.85, 1),
     ])
 }
 

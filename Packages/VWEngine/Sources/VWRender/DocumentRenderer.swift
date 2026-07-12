@@ -94,7 +94,7 @@ public final class DocumentRenderer {
                 continue
             }
 
-            if let background = block.background {
+            for background in block.backgrounds {
                 solidsBelow.append(SolidQuad(
                     origin: SIMD2(
                         originDev.x + Float((background.rectPts.minX * scale).rounded()),
@@ -119,6 +119,22 @@ public final class DocumentRenderer {
                 originDev.x + Float((block.textInsetPts.x * scale).rounded()),
                 blockTopDev + Float((block.textInsetPts.y * scale).rounded())
             )
+
+            // List marker: right-aligned into the indent column, 8pt gap,
+            // sharing the first line's baseline.
+            if let markerRuns = block.shaped.marker {
+                let markerOrigin = SIMD2<Float>(
+                    textOrigin.x - Float(((block.shaped.markerWidthPts + 8) * scale).rounded()),
+                    textOrigin.y
+                )
+                for run in markerRuns {
+                    appendRun(
+                        run, textOrigin: markerOrigin,
+                        theme: theme, backdropLuminance: localLuminance,
+                        gray: &grayGlyphs, color: &colorGlyphs
+                    )
+                }
+            }
 
             for line in block.shaped.lines {
                 let baselineDev = textOrigin.y + Float(line.baselineDev)

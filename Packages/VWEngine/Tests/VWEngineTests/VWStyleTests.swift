@@ -34,18 +34,37 @@ import VWParse
         let doc = flat("- alpha\n- beta\n  - nested\n\n1. first")
         let items = doc.blocks.filter { $0.kind == .listItem }
         #expect(items.count == 4)
-        #expect(items[0].runs[0].text == "•  ")
+        #expect(items[0].marker == "•")
         #expect(items[0].listDepth == 0)
+        // Text indents one unit past the marker column (hanging indent).
+        #expect(items[0].indentLevel == 1)
         let nested = items.first { $0.runs.map(\.text).joined().contains("nested") }
         #expect(nested?.listDepth == 1)
+        #expect(nested?.marker == "◦")
+        #expect(nested?.indentLevel == 2)
         let ordered = items.first { $0.runs.map(\.text).joined().contains("first") }
-        #expect(ordered?.runs[0].text == "1. ")
+        #expect(ordered?.marker == "1.")
     }
 
     @Test func checkboxMarkers() {
         let doc = flat("- [x] done\n- [ ] todo")
-        #expect(doc.blocks[0].runs[0].text == "☑ ")
-        #expect(doc.blocks[1].runs[0].text == "☐ ")
+        #expect(doc.blocks[0].marker == "☑")
+        #expect(doc.blocks[1].marker == "☐")
+        // The marker is NOT part of the copyable text.
+        #expect(doc.blocks[0].runs.map(\.text).joined() == "done")
+    }
+
+    @Test func linksCarryDestination() {
+        let doc = flat("see [the docs](https://example.org/docs) here")
+        let linkRun = doc.blocks[0].runs.first { $0.text == "the docs" }
+        #expect(linkRun?.link == "https://example.org/docs")
+        #expect(linkRun?.color == .accent)
+        #expect(doc.blocks[0].runs.first { $0.text.contains("see") }?.link == nil)
+    }
+
+    @Test func codeBlockCarriesLanguage() {
+        let doc = flat("```swift\nlet x = 1\n```")
+        #expect(doc.blocks[0].codeLanguage == "swift")
     }
 
     @Test func quoteReadsSecondaryWithDepth() {

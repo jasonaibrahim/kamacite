@@ -45,6 +45,14 @@ public final class DocumentEngineView: NSView {
     private var lastDragViewPoint: CGPoint = .zero
     private var autoscrollVelocityPts: CGFloat = 0
 
+    // Links.
+    /// Directory-resolving base for relative link destinations (the document's URL).
+    public var baseURL: URL?
+    /// How to open an activated link; default opens in the system handler.
+    /// The app overrides to route .md files back into vw.
+    public var onOpenLink: ((URL) -> Void)?
+    private var mouseDownViewPoint: CGPoint?
+
     private var metalLayer: CAMetalLayer { layer as! CAMetalLayer }
 
     public init(data: Data, theme: Theme) {
@@ -52,6 +60,9 @@ public final class DocumentEngineView: NSView {
         super.init(frame: .zero)
         wantsLayer = true
         layerContentsRedrawPolicy = .duringViewResize
+        session.onContentUpdate = { [weak self] in
+            self?.setNeedsRender()
+        }
     }
 
     @available(*, unavailable)
@@ -214,6 +225,7 @@ public final class DocumentEngineView: NSView {
         }
 
         layout.evict(keeping: expand(visible, by: bounds.height * 4))
+        session.requestHighlights(for: blocks)
 
         return Frame(
             layout: DocumentLayout(
@@ -412,6 +424,7 @@ public final class DocumentEngineView: NSView {
         guard session.layout != nil else { return }
         window?.makeFirstResponder(self)
         let viewPoint = convert(event.locationInWindow, from: nil)
+        mouseDownViewPoint = viewPoint
         let position = textPosition(atViewPoint: viewPoint)
 
         switch event.clickCount {
@@ -448,6 +461,73 @@ public final class DocumentEngineView: NSView {
     public override func mouseUp(with event: NSEvent) {
         dragging = false
         autoscrollVelocityPts = 0
+
+        // A click (no meaningful drag) on link ink activates the link.
+        let viewPoint = convert(event.locationInWindow, from: nil)
+        if event.clickCount == 1,
+           let down = mouseDownViewPoint,
+           hypot(viewPoint.x - down.x, viewPoint.y - down.y) < 4,
+           let destination = linkDestination(atViewPoint: viewPoint) {
+            selection = nil
+            setNeedsRender()
+            openLink(destination)
+        }
+        mouseDownViewPoint = nil
+    }
+
+    // MARK: - Links
+
+    public override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach(removeTrackingArea)
+        addTrackingArea(NSTrackingArea(
+            rect: .zero,
+            options: [.mouseMoved, .activeInKeyWindow, .inVisibleRect],
+            owner: self
+        ))
+    }
+
+    public override func mouseMoved(with event: NSEvent) {
+        let viewPoint = convert(event.locationInWindow, from: nil)
+        if linkDestination(atViewPoint: viewPoint) != nil {
+            NSCursor.pointingHand.set()
+        } else {
+            NSCursor.iBeam.set()
+        }
+    }
+
+    private func linkDestination(atViewPoint viewPoint: CGPoint) -> String? {
+        guard let layout = session.layout, layout.blockCount > 0,
+              let document = session.document else { return nil }
+        let doc = docPoint(fromViewPoint: viewPoint)
+        guard doc.y >= 0 else { return nil }
+        let index = layout.blockIndex(at: doc.y)
+        guard document.blocks.indices.contains(index) else { return nil }
+        let block = layout.placedBlock(at: index)
+        return VWInteraction.linkDestination(at: doc, block: block, flat: document.blocks[index])
+    }
+
+    private func openLink(_ destination: String) {
+        if destination.hasPrefix("#") {
+            return // in-document anchors: post-v1
+        }
+        let resolved: URL?
+        if let url = URL(string: destination), url.scheme != nil {
+            resolved = url
+        } else if let baseURL {
+            resolved = URL(
+                fileURLWithPath: destination,
+                relativeTo: baseURL.deletingLastPathComponent()
+            ).standardizedFileURL
+        } else {
+            resolved = URL(string: destination)
+        }
+        guard let resolved else { return }
+        if let onOpenLink {
+            onOpenLink(resolved)
+        } else {
+            NSWorkspace.shared.open(resolved)
+        }
     }
 
     private func extendSelection(toViewPoint viewPoint: CGPoint) {
@@ -531,6 +611,25 @@ public final class DocumentEngineView: NSView {
         )
         let bytes = DocumentRenderer.bgraBytes(from: texture)
         writeBGRAPNG(bytes, width: texture.width, height: texture.height, to: URL(fileURLWithPath: path))
+
+        // VW_DUMP_SETTLED=1: a second dump after async work (syntax
+        // highlighting) lands, then exit. PerfReporter defers its bench exit.
+        if ProcessInfo.processInfo.environment["VW_DUMP_SETTLED"] == "1" {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+                guard let self, let renderer = self.renderer else { exit(0) }
+                let scale = self.scale
+                let frame = self.buildFrame()
+                let texture = renderer.renderOffscreen(
+                    layout: frame.layout, theme: self.session.theme,
+                    originPts: self.contentOriginPts, scale: scale,
+                    width: Int(self.bounds.width * scale), height: Int(self.bounds.height * scale)
+                )
+                let bytes = DocumentRenderer.bgraBytes(from: texture)
+                let settled = path.replacingOccurrences(of: ".png", with: "-settled.png")
+                writeBGRAPNG(bytes, width: texture.width, height: texture.height, to: URL(fileURLWithPath: settled))
+                exit(0)
+            }
+        }
     }
 
     /// VW_SCROLL_BENCH=1: after first present, time N synthetic scroll frames

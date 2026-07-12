@@ -22,16 +22,29 @@ public struct ShapedBlockText: Sendable {
     /// copies. Retained for every laid-out block; the lazy store bounds it to
     /// the viewport window.
     public let text: String
+    /// List marker glyphs (bullet/number/checkbox), shaped separately so text
+    /// wraps with a hanging indent. Positions are relative to the marker's own
+    /// origin; the renderer right-aligns it into the indent column at the
+    /// first line's baseline.
+    public let marker: [ShapedGlyphRun]?
+    public let markerWidthPts: CGFloat
 
     public var heightPts: CGFloat { CGFloat(lines.count) * lineHeightPts }
     public var utf16Length: Int { lines.last.map { $0.utf16Range.location + $0.utf16Range.length } ?? 0 }
 
-    public static let empty = ShapedBlockText(lines: [], lineHeightPts: 0, text: "")
+    public static let empty = ShapedBlockText(
+        lines: [], lineHeightPts: 0, text: "", marker: nil, markerWidthPts: 0
+    )
 
-    public init(lines: [ShapedTextLine], lineHeightPts: CGFloat, text: String) {
+    public init(
+        lines: [ShapedTextLine], lineHeightPts: CGFloat, text: String,
+        marker: [ShapedGlyphRun]? = nil, markerWidthPts: CGFloat = 0
+    ) {
         self.lines = lines
         self.lineHeightPts = lineHeightPts
         self.text = text
+        self.marker = marker
+        self.markerWidthPts = markerWidthPts
     }
 }
 
@@ -133,7 +146,53 @@ public func shapeBlock(
         start += count
     }
 
-    return ShapedBlockText(lines: lines, lineHeightPts: slot.height, text: attributed.string)
+    var markerRuns: [ShapedGlyphRun]?
+    var markerWidth: CGFloat = 0
+    if let markerText = block.marker, !markerText.isEmpty, let firstLine = lines.first {
+        (markerRuns, markerWidth) = shapeMarker(
+            markerText, fonts: fonts, baselineDev: firstLine.baselineDev, scale: scale
+        )
+    }
+
+    return ShapedBlockText(
+        lines: lines, lineHeightPts: slot.height, text: attributed.string,
+        marker: markerRuns, markerWidthPts: markerWidth
+    )
+}
+
+/// One-line shape of a list marker. Same glyph pipeline as body text, aligned
+/// to the first text line's baseline.
+private func shapeMarker(
+    _ text: String, fonts: FontTable, baselineDev: CGFloat, scale: CGFloat
+) -> ([ShapedGlyphRun]?, CGFloat) {
+    let attributed = NSAttributedString(string: text, attributes: [
+        NSAttributedString.Key(kCTFontAttributeName as String): fonts.font(for: .body, traits: [])
+    ])
+    let ctLine = CTLineCreateWithAttributedString(attributed)
+    let width = CGFloat(CTLineGetTypographicBounds(ctLine, nil, nil, nil))
+
+    var runs: [ShapedGlyphRun] = []
+    let runArray = CTLineGetGlyphRuns(ctLine)
+    for runIndex in 0..<CFArrayGetCount(runArray) {
+        let ctRun = unsafeBitCast(CFArrayGetValueAtIndex(runArray, runIndex), to: CTRun.self)
+        let glyphCount = CTRunGetGlyphCount(ctRun)
+        guard glyphCount > 0 else { continue }
+        var glyphs = [CGGlyph](repeating: 0, count: glyphCount)
+        var positions = [CGPoint](repeating: .zero, count: glyphCount)
+        CTRunGetGlyphs(ctRun, CFRange(location: 0, length: 0), &glyphs)
+        CTRunGetPositions(ctRun, CFRange(location: 0, length: 0), &positions)
+        let font = runAttribute(ctRun, key: kCTFontAttributeName).map {
+            unsafeBitCast($0, to: CTFont.self)
+        } ?? CTFontCreateUIFontForLanguage(.system, 15, nil)!
+        runs.append(ShapedGlyphRun(
+            font: font,
+            isColorGlyphs: CTFontGetSymbolicTraits(font).contains(.traitColorGlyphs),
+            color: .secondaryText,
+            glyphs: glyphs,
+            positionsDev: positions.map { CGPoint(x: $0.x * scale, y: baselineDev - $0.y * scale) }
+        ))
+    }
+    return (runs.isEmpty ? nil : runs, width)
 }
 
 private func extractLine(
