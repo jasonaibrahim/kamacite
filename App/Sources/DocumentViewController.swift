@@ -1,7 +1,10 @@
 import AppKit
+import VWStyle
+import VWViewer
 
 final class DocumentViewController: NSViewController {
     let document: Document?
+    private(set) var engineView: DocumentEngineView?
 
     init(document: Document?) {
         self.document = document
@@ -14,8 +17,20 @@ final class DocumentViewController: NSViewController {
     }
 
     override func loadView() {
-        // Placeholder surface — replaced by VWViewer.DocumentEngineView when the
-        // Metal renderer lands (P2).
-        view = NSView(frame: NSRect(x: 0, y: 0, width: 760, height: 900))
+        guard let document else {
+            // Blank window (bench baseline, open-panel host).
+            view = NSView(frame: NSRect(x: 0, y: 0, width: 760, height: 900))
+            return
+        }
+        let engine = DocumentEngineView(data: document.data, theme: Self.currentTheme())
+        engine.frame = NSRect(x: 0, y: 0, width: 760, height: 900)
+        engineView = engine
+        view = engine
+    }
+
+    /// Follows the system appearance at open; live flipping is P8.
+    private static func currentTheme() -> Theme {
+        let appearance = NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua])
+        return appearance == .darkAqua ? .dark : .light
     }
 }

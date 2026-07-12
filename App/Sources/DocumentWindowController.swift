@@ -1,4 +1,5 @@
 import AppKit
+import VWViewer
 
 final class DocumentWindowController: NSWindowController, NSWindowDelegate {
     // Not named `document`: NSWindowController already owns that property for NSDocument.
@@ -30,6 +31,10 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate {
     @available(*, unavailable)
     required init?(coder: NSCoder) {
         fatalError("vw builds UI in code; no archives")
+    }
+
+    var engineView: DocumentEngineView? {
+        (contentViewController as? DocumentViewController)?.engineView
     }
 
     func windowWillClose(_ notification: Notification) {

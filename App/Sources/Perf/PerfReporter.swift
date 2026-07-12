@@ -27,6 +27,12 @@ final class OpenTrace {
     func mark(_ name: String) {
         marks.append((name, CACurrentMediaTime()))
     }
+
+    /// For timestamps sourced elsewhere (MTLDrawable.presentedTime shares the
+    /// CACurrentMediaTime timebase).
+    func mark(_ name: String, at time: CFTimeInterval) {
+        marks.append((name, time))
+    }
 }
 
 final class PerfReporter {

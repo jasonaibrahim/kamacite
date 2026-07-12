@@ -20,16 +20,20 @@ let package = Package(
             name: "VWParse",
             dependencies: ["VWCore", .product(name: "Markdown", package: "swift-markdown")]
         ),
-        .target(name: "VWStyle", dependencies: ["VWCore"]),
+        .target(name: "VWStyle", dependencies: ["VWCore", "VWParse"]),
         .target(name: "VWText", dependencies: ["VWCore", "VWStyle"]),
         .target(name: "VWLayout", dependencies: ["VWText"]),
-        .target(name: "VWRender", dependencies: ["VWText"]),
+        .target(name: "VWRender", dependencies: ["VWText", "VWLayout"]),
         .target(name: "VWInteraction", dependencies: ["VWLayout"]),
         .target(
             name: "VWViewer",
             dependencies: ["VWParse", "VWStyle", "VWText", "VWLayout", "VWRender", "VWInteraction"]
         ),
-        .testTarget(name: "VWEngineTests", dependencies: ["VWCore"]),
+        .testTarget(
+            name: "VWEngineTests",
+            dependencies: ["VWCore", "VWParse", "VWStyle", "VWText", "VWLayout", "VWRender"],
+            resources: [.copy("Goldens")]
+        ),
     ],
     swiftLanguageModes: [.v6]
 )

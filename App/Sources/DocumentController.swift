@@ -42,15 +42,33 @@ final class DocumentController: NSObject {
     private func show(_ controller: DocumentWindowController, trace: OpenTrace) {
         windowControllers.append(controller)
         trace.mark("window")
-        // CATransaction completion is the closest first-present proxy without Metal;
-        // replaced by MTLDrawable.addPresentedHandler when the renderer lands (P2).
-        CATransaction.begin()
-        CATransaction.setCompletionBlock {
-            trace.mark("present")
-            PerfReporter.shared.presented(trace)
+
+        if let engineView = controller.engineView {
+            // Content before visibility: the engine parses, lays out, encodes,
+            // and presents within the current transaction; the window's first
+            // on-screen commit already contains rendered markdown. The glass
+            // timestamp comes from MTLDrawable.addPresentedHandler.
+            engineView.prepareFirstFrame(
+                mark: { trace.mark($0) },
+                presented: { presentedTime in
+                    Task { @MainActor in
+                        trace.mark("present", at: presentedTime)
+                        PerfReporter.shared.presented(trace)
+                    }
+                }
+            )
+            controller.showWindow(nil)
+        } else {
+            // Blank window (bench baseline): CATransaction completion stays the
+            // present proxy — there is no drawable to ask.
+            CATransaction.begin()
+            CATransaction.setCompletionBlock {
+                trace.mark("present")
+                PerfReporter.shared.presented(trace)
+            }
+            controller.showWindow(nil)
+            CATransaction.commit()
         }
-        controller.showWindow(nil)
-        CATransaction.commit()
     }
 
     func remove(_ controller: DocumentWindowController) {
