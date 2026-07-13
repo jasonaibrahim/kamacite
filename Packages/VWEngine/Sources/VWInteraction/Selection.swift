@@ -32,12 +32,15 @@ public struct DocumentSelection: Sendable, Equatable {
 // MARK: - Hit testing
 
 /// Document point → text position within a placed block. Points above the
-/// text map to its start, below to its end — standard drag semantics.
+/// text map to its start, below to its end — standard drag semantics. Table
+/// rows resolve the cell nearest in x first (lines from different cells share
+/// the same y band).
 public func textPosition(
     at docPoint: CGPoint, in block: BlockLayout, contentOriginX: CGFloat = 0
 ) -> TextPosition {
     let shaped = block.shaped
-    guard !shaped.lines.isEmpty else {
+    let placed = shaped.positionedLines
+    guard !placed.isEmpty else {
         return TextPosition(blockIndex: block.flatIndex, utf16Offset: 0)
     }
 
@@ -47,16 +50,38 @@ public func textPosition(
     if localY < 0 {
         return TextPosition(blockIndex: block.flatIndex, utf16Offset: 0)
     }
-    if localY >= CGFloat(shaped.lines.count) * shaped.lineHeightPts {
+    if localY >= shaped.heightPts {
         return TextPosition(blockIndex: block.flatIndex, utf16Offset: shaped.utf16Length)
     }
-    let lineIndex = min(Int(localY / max(shaped.lineHeightPts, 1)), shaped.lines.count - 1)
-    let line = shaped.lines[lineIndex]
-    let utf16 = CTLineGetStringIndexForPosition(line.ctLine.line, CGPoint(x: localX, y: 0))
-    if utf16 == kCFNotFound {
-        return TextPosition(blockIndex: block.flatIndex, utf16Offset: line.utf16Range.location)
+
+    var best: PositionedLine?
+    var bestDistance = CGFloat.greatestFiniteMagnitude
+    for candidate in placed {
+        let yDistance: CGFloat
+        if localY >= candidate.lineTopPts, localY < candidate.lineTopPts + candidate.lineHeightPts {
+            yDistance = 0
+        } else {
+            yDistance = min(
+                abs(localY - candidate.lineTopPts),
+                abs(localY - (candidate.lineTopPts + candidate.lineHeightPts))
+            ) * 1000 // same-band candidates always win over other bands
+        }
+        let clampedX = min(max(localX, candidate.xOffsetPts), candidate.xOffsetPts + candidate.line.widthPts)
+        let distance = yDistance + abs(localX - clampedX)
+        if distance < bestDistance {
+            bestDistance = distance
+            best = candidate
+        }
     }
-    return TextPosition(blockIndex: block.flatIndex, utf16Offset: utf16)
+    guard let best else {
+        return TextPosition(blockIndex: block.flatIndex, utf16Offset: 0)
+    }
+
+    let utf16 = CTLineGetStringIndexForPosition(
+        best.line.ctLine.line, CGPoint(x: localX - best.xOffsetPts, y: 0)
+    )
+    let local = utf16 == kCFNotFound ? best.line.utf16Range.location : utf16
+    return TextPosition(blockIndex: block.flatIndex, utf16Offset: local + best.utf16Base)
 }
 
 // MARK: - Selection geometry
@@ -73,33 +98,37 @@ public func selectionRects(
     else { return [] }
 
     let shaped = block.shaped
-    guard !shaped.lines.isEmpty else { return [] }
+    guard shaped.utf16Length > 0 else { return [] }
 
     let selStart = block.flatIndex == start.blockIndex ? start.utf16Offset : 0
     let selEnd = block.flatIndex == end.blockIndex ? end.utf16Offset : shaped.utf16Length
     guard selEnd > selStart else { return [] }
 
     var rects: [CGRect] = []
-    for (lineIndex, line) in shaped.lines.enumerated() {
-        let lineStart = line.utf16Range.location
-        let lineEnd = lineStart + line.utf16Range.length
+    for placed in shaped.positionedLines {
+        let lineStart = placed.utf16Base + placed.line.utf16Range.location
+        let lineEnd = lineStart + placed.line.utf16Range.length
         let overlapStart = max(selStart, lineStart)
         let overlapEnd = min(selEnd, lineEnd)
         guard overlapEnd > overlapStart else { continue }
 
-        let x0 = CGFloat(CTLineGetOffsetForStringIndex(line.ctLine.line, overlapStart, nil))
+        let x0 = CGFloat(CTLineGetOffsetForStringIndex(
+            placed.line.ctLine.line, overlapStart - placed.utf16Base, nil
+        ))
         // Selection running past this line's end highlights the whole line
         // (including the space the wrap consumed) — matches system behavior.
         let x1 = overlapEnd >= lineEnd && selEnd > lineEnd
-            ? line.widthPts
-            : CGFloat(CTLineGetOffsetForStringIndex(line.ctLine.line, overlapEnd, nil))
+            ? placed.line.widthPts
+            : CGFloat(CTLineGetOffsetForStringIndex(
+                placed.line.ctLine.line, overlapEnd - placed.utf16Base, nil
+            ))
         guard x1 > x0 else { continue }
 
         rects.append(CGRect(
-            x: contentOriginX + block.textInsetPts.x + x0,
-            y: block.yPts + block.textInsetPts.y + CGFloat(lineIndex) * shaped.lineHeightPts,
+            x: contentOriginX + block.textInsetPts.x + placed.xOffsetPts + x0,
+            y: block.yPts + block.textInsetPts.y + placed.lineTopPts,
             width: x1 - x0,
-            height: shaped.lineHeightPts
+            height: placed.lineHeightPts
         ))
     }
     return rects
@@ -125,20 +154,22 @@ public func styledRun(in block: FlatBlock, atUTF16 offset: Int) -> StyledRun? {
 public func linkDestination(
     at docPoint: CGPoint, block: BlockLayout, flat: FlatBlock, contentOriginX: CGFloat = 0
 ) -> String? {
-    let shaped = block.shaped
-    guard !shaped.lines.isEmpty else { return nil }
-
     let localY = docPoint.y - block.yPts - block.textInsetPts.y
-    guard localY >= 0, localY < CGFloat(shaped.lines.count) * shaped.lineHeightPts else { return nil }
-    let lineIndex = min(Int(localY / max(shaped.lineHeightPts, 1)), shaped.lines.count - 1)
-    let line = shaped.lines[lineIndex]
-
     let localX = docPoint.x - contentOriginX - block.textInsetPts.x
-    guard localX >= -2, localX <= line.widthPts + 2 else { return nil }
 
-    let index = CTLineGetStringIndexForPosition(line.ctLine.line, CGPoint(x: localX, y: 0))
-    guard index != kCFNotFound else { return nil }
-    return styledRun(in: flat, atUTF16: index)?.link
+    for placed in block.shaped.positionedLines {
+        guard localY >= placed.lineTopPts,
+              localY < placed.lineTopPts + placed.lineHeightPts,
+              localX >= placed.xOffsetPts - 2,
+              localX <= placed.xOffsetPts + placed.line.widthPts + 2
+        else { continue }
+        let index = CTLineGetStringIndexForPosition(
+            placed.line.ctLine.line, CGPoint(x: localX - placed.xOffsetPts, y: 0)
+        )
+        guard index != kCFNotFound else { return nil }
+        return styledRun(in: flat, atUTF16: index + placed.utf16Base)?.link
+    }
+    return nil
 }
 
 // MARK: - Expansion (double/triple click)

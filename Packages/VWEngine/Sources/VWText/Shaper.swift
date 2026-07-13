@@ -1,6 +1,7 @@
 import CoreText
 import Foundation
 import VWCore
+import VWParse
 import VWStyle
 
 // CoreText shaping of one FlatBlock. A custom `vw.run` attribute rides through
@@ -13,38 +14,120 @@ import VWStyle
 // x keeps its fraction — the atlas's subpixel buckets absorb it. The line grid
 // is fixed per block from its base font, so fallback fonts with taller metrics
 // (CJK, emoji) can't create ransom-note line spacing.
+//
+// Table rows hold one shaped flow PER CELL; `positionedLines` flattens either
+// shape into a uniform list so the renderer and interaction never branch.
 
 public struct ShapedBlockText: Sendable {
     public let lines: [ShapedTextLine]
     public let lineHeightPts: CGFloat
-    /// The exact string the block was shaped from (concatenated styled runs) —
-    /// the coordinate space of every UTF-16 offset below, and what selection
-    /// copies. Retained for every laid-out block; the lazy store bounds it to
-    /// the viewport window.
+    /// The exact string the block was shaped from — the coordinate space of
+    /// every UTF-16 offset below, and what selection copies. For table rows:
+    /// cell texts joined with tabs.
     public let text: String
     /// List marker glyphs (bullet/number/checkbox), shaped separately so text
-    /// wraps with a hanging indent. Positions are relative to the marker's own
-    /// origin; the renderer right-aligns it into the indent column at the
-    /// first line's baseline.
+    /// wraps with a hanging indent.
     public let marker: [ShapedGlyphRun]?
     public let markerWidthPts: CGFloat
+    /// Table rows only: one shaped flow per cell. When set, `lines` is empty.
+    public let cells: [ShapedCell]?
+    public let heightPts: CGFloat
+    public let utf16Length: Int
 
-    public var heightPts: CGFloat { CGFloat(lines.count) * lineHeightPts }
-    public var utf16Length: Int { lines.last.map { $0.utf16Range.location + $0.utf16Range.length } ?? 0 }
-
-    public static let empty = ShapedBlockText(
-        lines: [], lineHeightPts: 0, text: "", marker: nil, markerWidthPts: 0
-    )
+    public static let empty = ShapedBlockText(lines: [], lineHeightPts: 0, text: "")
 
     public init(
         lines: [ShapedTextLine], lineHeightPts: CGFloat, text: String,
-        marker: [ShapedGlyphRun]? = nil, markerWidthPts: CGFloat = 0
+        marker: [ShapedGlyphRun]? = nil, markerWidthPts: CGFloat = 0,
+        cells: [ShapedCell]? = nil, heightPts: CGFloat? = nil, utf16Length: Int? = nil
     ) {
         self.lines = lines
         self.lineHeightPts = lineHeightPts
         self.text = text
         self.marker = marker
         self.markerWidthPts = markerWidthPts
+        self.cells = cells
+        self.heightPts = heightPts ?? CGFloat(lines.count) * lineHeightPts
+        self.utf16Length = utf16Length
+            ?? lines.last.map { $0.utf16Range.location + $0.utf16Range.length } ?? 0
+    }
+}
+
+/// One table cell's shaped flow, positioned within its row.
+public struct ShapedCell: Sendable {
+    public let content: ShapedBlockText
+    /// Cell CONTENT left edge from the block-text origin, points.
+    public let xOffsetPts: CGFloat
+    /// Content width — the alignment reference.
+    public let widthPts: CGFloat
+    /// Content top from the block-text origin (cell padding), points.
+    public let contentTopPts: CGFloat
+    /// Add to cell-local UTF-16 offsets to get row-text offsets.
+    public let utf16Base: Int
+    public let alignment: TableAlignment
+
+    public init(
+        content: ShapedBlockText, xOffsetPts: CGFloat, widthPts: CGFloat,
+        contentTopPts: CGFloat, utf16Base: Int, alignment: TableAlignment
+    ) {
+        self.content = content
+        self.xOffsetPts = xOffsetPts
+        self.widthPts = widthPts
+        self.contentTopPts = contentTopPts
+        self.utf16Base = utf16Base
+        self.alignment = alignment
+    }
+
+    public func lineXOffset(_ line: ShapedTextLine) -> CGFloat {
+        switch alignment {
+        case .center: max(0, (widthPts - line.widthPts) / 2)
+        case .right: max(0, widthPts - line.widthPts)
+        case .left, .none: 0
+        }
+    }
+}
+
+/// A line placed in block-text space — the uniform view over plain blocks and
+/// table rows that the renderer and interaction consume.
+public struct PositionedLine: Sendable {
+    public let line: ShapedTextLine
+    /// Add to ctLine-local UTF-16 indices to get block-text offsets.
+    public let utf16Base: Int
+    /// Line origin x from block-text origin (cell x + alignment shift), points.
+    public let xOffsetPts: CGFloat
+    /// The flow's top offset (0 for plain blocks, cell padding for cells) —
+    /// line.baselineDev already encodes line stacking WITHIN the flow.
+    public let flowTopPts: CGFloat
+    /// This line's box top in block-text space (hit testing, selection rects).
+    public let lineTopPts: CGFloat
+    public let lineHeightPts: CGFloat
+}
+
+extension ShapedBlockText {
+    public var positionedLines: [PositionedLine] {
+        guard let cells else {
+            return lines.enumerated().map { index, line in
+                PositionedLine(
+                    line: line, utf16Base: 0, xOffsetPts: 0, flowTopPts: 0,
+                    lineTopPts: CGFloat(index) * lineHeightPts,
+                    lineHeightPts: lineHeightPts
+                )
+            }
+        }
+        var placed: [PositionedLine] = []
+        for cell in cells {
+            for (index, line) in cell.content.lines.enumerated() {
+                placed.append(PositionedLine(
+                    line: line,
+                    utf16Base: cell.utf16Base,
+                    xOffsetPts: cell.xOffsetPts + cell.lineXOffset(line),
+                    flowTopPts: cell.contentTopPts,
+                    lineTopPts: cell.contentTopPts + CGFloat(index) * cell.content.lineHeightPts,
+                    lineHeightPts: cell.content.lineHeightPts
+                ))
+            }
+        }
+        return placed
     }
 }
 
@@ -58,15 +141,14 @@ public struct LineRef: @unchecked Sendable {
 }
 
 public struct ShapedTextLine: Sendable {
-    /// Baseline in device pixels from the block-text top, whole-pixel.
+    /// Baseline in device pixels from its FLOW's top, whole-pixel.
     public let baselineDev: CGFloat
     public let runs: [ShapedGlyphRun]
-    /// Non-glyph ink (strikethrough segments), points, block-text-relative.
+    /// Non-glyph ink (strikethrough segments), points, flow-relative.
     public let decorations: [LineDecoration]
-    /// Retained for caret math: CTLineGetStringIndexForPosition /
-    /// CTLineGetOffsetForStringIndex, in the block string's UTF-16 space.
+    /// Retained for caret math, in the flow string's UTF-16 space.
     public let ctLine: LineRef
-    /// This line's slice of the block string (UTF-16 location/length).
+    /// This line's slice of its flow string (UTF-16 location/length).
     public let utf16Range: (location: Int, length: Int)
     public let widthPts: CGFloat
 
@@ -99,7 +181,7 @@ public struct ShapedGlyphRun: @unchecked Sendable {
     public let isColorGlyphs: Bool
     public let color: ColorToken
     public let glyphs: [CGGlyph]
-    /// Glyph origins in device pixels relative to the block-text origin:
+    /// Glyph origins in device pixels relative to the flow origin:
     /// x fractional, y = whole-pixel baseline plus any run offset.
     public let positionsDev: [CGPoint]
 
@@ -114,22 +196,46 @@ public struct ShapedGlyphRun: @unchecked Sendable {
 
 private let runIndexKey = NSAttributedString.Key("vw.run")
 
+// MARK: - Block shaping
+
 public func shapeBlock(
     _ block: FlatBlock, fonts: FontTable, width: CGFloat, scale: CGFloat
 ) -> ShapedBlockText {
+    let shaped = shapeRuns(
+        block.runs, baseFontClass: block.baseFontClass,
+        fonts: fonts, width: width, scale: scale
+    )
+    guard let markerText = block.marker, !markerText.isEmpty,
+          let firstLine = shaped.lines.first
+    else { return shaped }
+
+    let (markerRuns, markerWidth) = shapeMarker(
+        markerText, fonts: fonts, baselineDev: firstLine.baselineDev, scale: scale
+    )
+    return ShapedBlockText(
+        lines: shaped.lines, lineHeightPts: shaped.lineHeightPts, text: shaped.text,
+        marker: markerRuns, markerWidthPts: markerWidth
+    )
+}
+
+/// Shape one run flow wrapped at `width` — the core every path shares.
+public func shapeRuns(
+    _ runs: [StyledRun], baseFontClass: FontClass,
+    fonts: FontTable, width: CGFloat, scale: CGFloat
+) -> ShapedBlockText {
     let attributed = NSMutableAttributedString()
-    for (index, run) in block.runs.enumerated() where !run.text.isEmpty {
+    for (index, run) in runs.enumerated() where !run.text.isEmpty {
         attributed.append(NSAttributedString(string: run.text, attributes: [
             NSAttributedString.Key(kCTFontAttributeName as String):
-                fonts.font(for: block.baseFontClass, traits: run.traits),
+                fonts.font(for: baseFontClass, traits: run.traits),
             runIndexKey: NSNumber(value: index),
         ]))
     }
     guard attributed.length > 0 else { return .empty }
 
-    let slot = fonts.lineSlot(for: block.baseFontClass)
+    let slot = fonts.lineSlot(for: baseFontClass)
     let typesetter = CTTypesetterCreateWithAttributedString(attributed)
-    let usableWidth = Double(max(width, 40))
+    let usableWidth = Double(max(width, 24))
 
     var lines: [ShapedTextLine] = []
     var start = 0
@@ -140,25 +246,67 @@ public func shapeBlock(
         let ctLine = CTTypesetterCreateLine(typesetter, CFRange(location: start, length: count))
         let baselinePts = CGFloat(lines.count) * slot.height + slot.ascent
         lines.append(extractLine(
-            ctLine, block: block, baselinePts: baselinePts, scale: scale,
+            ctLine, styledRuns: runs, baselinePts: baselinePts, scale: scale,
             utf16Range: (start, count)
         ))
         start += count
     }
 
-    var markerRuns: [ShapedGlyphRun]?
-    var markerWidth: CGFloat = 0
-    if let markerText = block.marker, !markerText.isEmpty, let firstLine = lines.first {
-        (markerRuns, markerWidth) = shapeMarker(
-            markerText, fonts: fonts, baselineDev: firstLine.baselineDev, scale: scale
+    return ShapedBlockText(lines: lines, lineHeightPts: slot.height, text: attributed.string)
+}
+
+// MARK: - Table rows
+
+/// Shape a table row: each cell is its own flow wrapped at its column's
+/// content width. `columnWidths` INCLUDE the horizontal cell padding.
+public func shapeTableRow(
+    cells: [[StyledRun]],
+    alignments: [TableAlignment],
+    columnWidths: [CGFloat],
+    cellPadding: CGSize,
+    fonts: FontTable,
+    scale: CGFloat
+) -> ShapedBlockText {
+    let slot = fonts.lineSlot(for: .body)
+    var shapedCells: [ShapedCell] = []
+    var rowText = ""
+    var utf16Base = 0
+    var columnX: CGFloat = 0
+    var maxContentHeight: CGFloat = slot.height
+
+    for (index, cellRuns) in cells.enumerated() {
+        let columnWidth = index < columnWidths.count ? columnWidths[index] : 60
+        let contentWidth = max(16, columnWidth - cellPadding.width * 2)
+        let content = shapeRuns(
+            cellRuns, baseFontClass: .body, fonts: fonts, width: contentWidth, scale: scale
         )
+        if index > 0 {
+            rowText += "\t"
+            utf16Base += 1
+        }
+        shapedCells.append(ShapedCell(
+            content: content,
+            xOffsetPts: columnX + cellPadding.width,
+            widthPts: contentWidth,
+            contentTopPts: cellPadding.height,
+            utf16Base: utf16Base,
+            alignment: index < alignments.count ? alignments[index] : .none
+        ))
+        rowText += content.text
+        utf16Base += content.utf16Length
+        columnX += columnWidth
+        maxContentHeight = max(maxContentHeight, content.heightPts)
     }
 
     return ShapedBlockText(
-        lines: lines, lineHeightPts: slot.height, text: attributed.string,
-        marker: markerRuns, markerWidthPts: markerWidth
+        lines: [], lineHeightPts: slot.height, text: rowText,
+        cells: shapedCells,
+        heightPts: maxContentHeight + cellPadding.height * 2,
+        utf16Length: utf16Base
     )
 }
+
+// MARK: - Markers
 
 /// One-line shape of a list marker. Same glyph pipeline as body text, aligned
 /// to the first text line's baseline.
@@ -195,8 +343,10 @@ private func shapeMarker(
     return (runs.isEmpty ? nil : runs, width)
 }
 
+// MARK: - Extraction
+
 private func extractLine(
-    _ ctLine: CTLine, block: FlatBlock, baselinePts: CGFloat, scale: CGFloat,
+    _ ctLine: CTLine, styledRuns: [StyledRun], baselinePts: CGFloat, scale: CGFloat,
     utf16Range: (location: Int, length: Int)
 ) -> ShapedTextLine {
     let baselineDev = (baselinePts * scale).rounded()
@@ -217,7 +367,7 @@ private func extractLine(
         let font = runAttribute(ctRun, key: kCTFontAttributeName).map {
             unsafeBitCast($0, to: CTFont.self)
         } ?? CTFontCreateUIFontForLanguage(.system, 15, nil)!
-        let styled = styledRun(for: ctRun, in: block)
+        let styled = styledRun(for: ctRun, in: styledRuns)
 
         let positionsDev = linePositions.map { p in
             CGPoint(x: p.x * scale, y: baselineDev - p.y * scale)
@@ -256,11 +406,11 @@ private func extractLine(
     )
 }
 
-private func styledRun(for ctRun: CTRun, in block: FlatBlock) -> StyledRun? {
+private func styledRun(for ctRun: CTRun, in runs: [StyledRun]) -> StyledRun? {
     guard let value = runAttribute(ctRun, key: "vw.run" as CFString) else { return nil }
     let index = unsafeBitCast(value, to: NSNumber.self).intValue
-    guard block.runs.indices.contains(index) else { return nil }
-    return block.runs[index]
+    guard runs.indices.contains(index) else { return nil }
+    return runs[index]
 }
 
 private func runAttribute(_ run: CTRun, key: CFString) -> UnsafeRawPointer? {

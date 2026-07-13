@@ -8,9 +8,44 @@ import VWParse
 
 public struct FlatDocument: Sendable {
     public var blocks: [FlatBlock]
+    /// One entry per source table; rows reference these by index.
+    public var tables: [FlatTable]
 
-    public init(blocks: [FlatBlock]) {
+    public init(blocks: [FlatBlock], tables: [FlatTable] = []) {
         self.blocks = blocks
+        self.tables = tables
+    }
+}
+
+public struct FlatTable: Sendable, Equatable {
+    public var alignments: [TableAlignment]
+    /// Rows are contiguous flat blocks starting here — column measurement
+    /// samples them without scanning the document.
+    public var firstRowFlatIndex: Int
+    public var rowCount: Int
+
+    public init(alignments: [TableAlignment], firstRowFlatIndex: Int, rowCount: Int) {
+        self.alignments = alignments
+        self.firstRowFlatIndex = firstRowFlatIndex
+        self.rowCount = rowCount
+    }
+}
+
+public struct TableRowInfo: Sendable, Equatable {
+    public var tableIndex: Int
+    public var rowIndex: Int
+    public var isHeader: Bool
+    public var isLastRow: Bool
+    /// Styled runs per cell. `FlatBlock.runs` holds the same runs joined with
+    /// tab separators — copy and estimation work on rows like any block.
+    public var cells: [[StyledRun]]
+
+    public init(tableIndex: Int, rowIndex: Int, isHeader: Bool, isLastRow: Bool, cells: [[StyledRun]]) {
+        self.tableIndex = tableIndex
+        self.rowIndex = rowIndex
+        self.isHeader = isHeader
+        self.isLastRow = isLastRow
+        self.cells = cells
     }
 }
 
@@ -25,6 +60,8 @@ public struct FlatBlock: Sendable {
     public var marker: String?
     /// Fence info string for code blocks; drives async syntax highlighting.
     public var codeLanguage: String?
+    /// Structured cell data for `.tableRow` blocks.
+    public var tableRow: TableRowInfo?
     public var runs: [StyledRun]
 
     /// The font class shaping uses for the line grid; runs may add traits.
@@ -32,7 +69,6 @@ public struct FlatBlock: Sendable {
         switch kind {
         case .heading(let level): .heading(level)
         case .codeBlock: .code
-        case .tableRow: .code
         default: .body
         }
     }
@@ -46,7 +82,8 @@ public struct FlatBlock: Sendable {
     public init(
         id: BlockID, span: SourceSpan, kind: FlatBlockKind,
         quoteDepth: Int = 0, listDepth: Int = 0,
-        marker: String? = nil, codeLanguage: String? = nil, runs: [StyledRun]
+        marker: String? = nil, codeLanguage: String? = nil,
+        tableRow: TableRowInfo? = nil, runs: [StyledRun]
     ) {
         self.id = id
         self.span = span
@@ -55,6 +92,7 @@ public struct FlatBlock: Sendable {
         self.listDepth = listDepth
         self.marker = marker
         self.codeLanguage = codeLanguage
+        self.tableRow = tableRow
         self.runs = runs
     }
 }
@@ -95,11 +133,12 @@ public func flatten(_ tree: ContentTree) -> FlatDocument {
     for block in tree.blocks {
         flattener.flatten(block)
     }
-    return FlatDocument(blocks: flattener.output)
+    return FlatDocument(blocks: flattener.output, tables: flattener.tables)
 }
 
 private struct Flattener {
     var output: [FlatBlock] = []
+    var tables: [FlatTable] = []
     private var quoteDepth = 0
     private var listDepth = 0
     /// Quoted content reads as secondary; P4 adds the vertical bar.
@@ -131,14 +170,8 @@ private struct Flattener {
                 flattenListItem(item, marker: marker(ordered: ordered, start: start, index: index, checkbox: item.checkbox))
             }
 
-        case .table(_, let head, let body):
-            // Degraded rendering until P5: one mono row per table row.
-            if !head.isEmpty {
-                emit(block, kind: .tableRow, runs: rowRuns(head, bold: true))
-            }
-            for row in body where !row.isEmpty {
-                emit(block, kind: .tableRow, runs: rowRuns(row, bold: false))
-            }
+        case .table(let alignments, let head, let body):
+            flattenTable(block, alignments: alignments, head: head, body: body)
 
         case .thematicBreak:
             emit(block, kind: .rule, runs: [], allowEmpty: true)
@@ -196,9 +229,67 @@ private struct Flattener {
         ))
     }
 
-    private func rowRuns(_ cells: [[InlineNode]], bold: Bool) -> [StyledRun] {
-        let text = cells.map { $0.map(\.plainText).joined() }.joined(separator: "   ")
-        return [StyledRun(text: text, traits: bold ? [.mono, .bold] : .mono, color: .codeText, span: nil)]
+    private mutating func flattenTable(
+        _ block: ContentBlock, alignments: [TableAlignment],
+        head: [[InlineNode]], body: [[[InlineNode]]]
+    ) {
+        let columnCount = max(alignments.count, head.count)
+        guard columnCount > 0 else { return }
+
+        var rows: [(cells: [[InlineNode]], isHeader: Bool)] = []
+        if !head.isEmpty {
+            rows.append((head, true))
+        }
+        for row in body where !row.isEmpty {
+            rows.append((row, false))
+        }
+        guard !rows.isEmpty else { return }
+
+        let tableIndex = tables.count
+        tables.append(FlatTable(
+            alignments: alignments,
+            firstRowFlatIndex: output.count,
+            rowCount: rows.count
+        ))
+
+        for (rowIndex, row) in rows.enumerated() {
+            // Every row gets exactly columnCount cells; short rows pad out.
+            var cells: [[StyledRun]] = []
+            for column in 0..<columnCount {
+                let inlines = column < row.cells.count ? row.cells[column] : []
+                var cellRuns: [StyledRun] = []
+                appendRuns(
+                    from: inlines,
+                    traits: row.isHeader ? .bold : [],
+                    color: baseColor,
+                    into: &cellRuns
+                )
+                cells.append(cellRuns)
+            }
+
+            // Joined runs (tab-separated): estimation and plain-text copy see
+            // one ordinary block; the tabs paste cleanly into spreadsheets.
+            var joined: [StyledRun] = []
+            for (column, cellRuns) in cells.enumerated() {
+                if column > 0 {
+                    joined.append(StyledRun(text: "\t", traits: [], color: baseColor, span: nil))
+                }
+                joined.append(contentsOf: cellRuns)
+            }
+
+            output.append(FlatBlock(
+                id: block.id, span: block.span, kind: .tableRow,
+                quoteDepth: quoteDepth, listDepth: listDepth,
+                tableRow: TableRowInfo(
+                    tableIndex: tableIndex,
+                    rowIndex: rowIndex,
+                    isHeader: row.isHeader,
+                    isLastRow: rowIndex == rows.count - 1,
+                    cells: cells
+                ),
+                runs: joined
+            ))
+        }
     }
 
     // MARK: - Inline runs

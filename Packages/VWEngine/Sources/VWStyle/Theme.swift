@@ -72,6 +72,9 @@ public struct Metrics: Sendable, Equatable {
     public var ruleSpacing: CGFloat = 14
     public var ruleThickness: CGFloat = 1
     public var indentWidth: CGFloat = 22
+    /// Horizontal/vertical padding inside table cells; column widths include
+    /// the horizontal component.
+    public var tableCellPadding = CGSize(width: 10, height: 5)
 
     public init() {}
 

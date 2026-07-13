@@ -12,23 +12,31 @@ import VWText
 // above it was wrong.
 
 /// Spacing rules shared by estimation and exact placement — they MUST agree,
-/// or estimates would be biased by construction.
-func spacingBefore(_ kind: FlatBlockKind, metrics: Metrics) -> CGFloat {
-    switch kind {
-    case .heading: metrics.headingSpacingBefore
-    case .rule: metrics.ruleSpacing
-    default: 0
+/// or estimates would be biased by construction. Table rows butt together
+/// (separators live inside the row); the table as a whole gets breathing room
+/// via its first and last rows.
+func spacingBefore(_ block: FlatBlock, metrics: Metrics) -> CGFloat {
+    if let row = block.tableRow {
+        return row.rowIndex == 0 ? 10 : 0
+    }
+    switch block.kind {
+    case .heading: return metrics.headingSpacingBefore
+    case .rule: return metrics.ruleSpacing
+    default: return 0
     }
 }
 
-func spacingAfter(_ kind: FlatBlockKind, metrics: Metrics) -> CGFloat {
-    switch kind {
-    case .heading: metrics.headingSpacingAfter
-    case .paragraph: metrics.paragraphSpacing
-    case .codeBlock: metrics.codeBlockSpacing
-    case .listItem: metrics.listItemSpacing
-    case .tableRow: 2
-    case .rule: metrics.ruleSpacing
+func spacingAfter(_ block: FlatBlock, metrics: Metrics) -> CGFloat {
+    if let row = block.tableRow {
+        return row.isLastRow ? 12 : 0
+    }
+    switch block.kind {
+    case .heading: return metrics.headingSpacingAfter
+    case .paragraph: return metrics.paragraphSpacing
+    case .codeBlock: return metrics.codeBlockSpacing
+    case .listItem: return metrics.listItemSpacing
+    case .tableRow: return 0
+    case .rule: return metrics.ruleSpacing
     }
 }
 
@@ -49,6 +57,9 @@ public final class LazyLayout {
         let backgrounds: [BackgroundQuad]
     }
     private var cache: [Int: CachedBlock] = [:]
+    /// Column widths per table (padding included), measured once from a
+    /// sample of rows; cleared on reflow.
+    private var tableWidths: [Int: [CGFloat]] = [:]
 
     public init(
         document: FlatDocument, fonts: FontTable, metrics: Metrics,
@@ -98,6 +109,9 @@ public final class LazyLayout {
             let blockHeight: CGFloat
             if block.kind == .rule {
                 blockHeight = metrics.ruleThickness
+            } else if block.tableRow != nil {
+                // Rows are usually one line tall; exact shaping corrects.
+                blockHeight = slotHeight + metrics.tableCellPadding.height * 2
             } else {
                 // UTF-8 length as the char-count proxy (O(1) per run): CJK
                 // over-counts bytes but is ~2× wide, so it roughly cancels.
@@ -116,8 +130,8 @@ public final class LazyLayout {
                 blockHeight = CGFloat(lines) * slotHeight + padding * 2
             }
 
-            return Double(spacingBefore(block.kind, metrics: metrics) + blockHeight
-                + spacingAfter(block.kind, metrics: metrics))
+            return Double(spacingBefore(block, metrics: metrics) + blockHeight
+                + spacingAfter(block, metrics: metrics))
         }
     }
 
@@ -153,6 +167,9 @@ public final class LazyLayout {
     @discardableResult
     private func shapeExact(_ index: Int) -> CGFloat {
         let block = document.blocks[index]
+        if block.tableRow != nil {
+            return shapeTableRowExact(index)
+        }
         let indent = CGFloat(block.indentLevel) * metrics.indentWidth
         let padding = block.kind == .codeBlock ? metrics.codeBlockPadding : 0
         let textWidth = max(40, contentWidth - indent - padding * 2)
@@ -177,29 +194,7 @@ public final class LazyLayout {
             blockHeight = shaped.heightPts + padding * 2
         }
 
-        // Quote gutter bars, one per nesting level. A bar extends down across
-        // the inter-block gap when the NEXT block is quoted at least as deep —
-        // adjacent quoted blocks read as one continuous quote.
-        if block.quoteDepth > 0 {
-            let nextIndex = index + 1
-            for level in 0..<block.quoteDepth {
-                var barHeight = blockHeight
-                if nextIndex < document.blocks.count {
-                    let next = document.blocks[nextIndex]
-                    if next.quoteDepth > level {
-                        barHeight += spacingAfter(block.kind, metrics: metrics)
-                            + spacingBefore(next.kind, metrics: metrics)
-                    }
-                }
-                backgrounds.insert(BackgroundQuad(
-                    rectPts: CGRect(
-                        x: CGFloat(level) * metrics.indentWidth + 2, y: 0,
-                        width: 3, height: barHeight
-                    ),
-                    color: .quoteBar
-                ), at: 0)
-            }
-        }
+        appendQuoteBars(for: block, at: index, blockHeight: blockHeight, into: &backgrounds)
 
         cache[index] = CachedBlock(
             shaped: shaped,
@@ -209,6 +204,156 @@ public final class LazyLayout {
         )
         let composite = compositeHeight(index: index, blockHeight: blockHeight)
         return CGFloat(tree.setExact(index, height: Double(composite)))
+    }
+
+    private func shapeTableRowExact(_ index: Int) -> CGFloat {
+        let block = document.blocks[index]
+        let info = block.tableRow!
+        let table = document.tables[info.tableIndex]
+        let indent = CGFloat(block.indentLevel) * metrics.indentWidth
+        let widths = columnWidths(
+            tableIndex: info.tableIndex, available: max(80, contentWidth - indent)
+        )
+        let shaped = shapeTableRow(
+            cells: info.cells,
+            alignments: table.alignments,
+            columnWidths: widths,
+            cellPadding: metrics.tableCellPadding,
+            fonts: fonts,
+            scale: scale
+        )
+        let tableWidth = widths.reduce(0, +)
+
+        var backgrounds: [BackgroundQuad] = []
+        if info.isHeader {
+            backgrounds.append(BackgroundQuad(
+                rectPts: CGRect(x: indent, y: 0, width: tableWidth, height: shaped.heightPts),
+                color: .codeBackground
+            ))
+        }
+        // Row separator along the bottom edge.
+        backgrounds.append(BackgroundQuad(
+            rectPts: CGRect(x: indent, y: shaped.heightPts - 1, width: tableWidth, height: 1),
+            color: .rule
+        ))
+        appendQuoteBars(for: block, at: index, blockHeight: shaped.heightPts, into: &backgrounds)
+
+        cache[index] = CachedBlock(
+            shaped: shaped,
+            blockHeightPts: shaped.heightPts,
+            textInsetPts: CGPoint(x: indent, y: 0),
+            backgrounds: backgrounds
+        )
+        let composite = compositeHeight(index: index, blockHeight: shaped.heightPts)
+        return CGFloat(tree.setExact(index, height: Double(composite)))
+    }
+
+    /// Quote gutter bars, one per nesting level. A bar extends down across
+    /// the inter-block gap when the NEXT block is quoted at least as deep —
+    /// adjacent quoted blocks read as one continuous quote.
+    private func appendQuoteBars(
+        for block: FlatBlock, at index: Int, blockHeight: CGFloat,
+        into backgrounds: inout [BackgroundQuad]
+    ) {
+        guard block.quoteDepth > 0 else { return }
+        let nextIndex = index + 1
+        for level in 0..<block.quoteDepth {
+            var barHeight = blockHeight
+            if nextIndex < document.blocks.count {
+                let next = document.blocks[nextIndex]
+                if next.quoteDepth > level {
+                    barHeight += spacingAfter(block, metrics: metrics)
+                        + spacingBefore(next, metrics: metrics)
+                }
+            }
+            backgrounds.insert(BackgroundQuad(
+                rectPts: CGRect(
+                    x: CGFloat(level) * metrics.indentWidth + 2, y: 0,
+                    width: 3, height: barHeight
+                ),
+                color: .quoteBar
+            ), at: 0)
+        }
+    }
+
+    // MARK: - Table columns
+
+    /// Column widths for a table (cell padding included), from min/max-content
+    /// measurement of a bounded row sample distributed into the available
+    /// width. Measured once; a 10k-row table costs 64 rows of measuring.
+    private func columnWidths(tableIndex: Int, available: CGFloat) -> [CGFloat] {
+        if let cached = tableWidths[tableIndex] {
+            return cached
+        }
+        let table = document.tables[tableIndex]
+        let first = table.firstRowFlatIndex
+        let sampleCount = min(table.rowCount, 64)
+        let columnCount = max(
+            document.blocks.indices.contains(first)
+                ? document.blocks[first].tableRow?.cells.count ?? 0 : 0,
+            table.alignments.count, 1
+        )
+
+        var minContent = [CGFloat](repeating: 8, count: columnCount)
+        var maxContent = [CGFloat](repeating: 8, count: columnCount)
+        for offset in 0..<sampleCount {
+            guard document.blocks.indices.contains(first + offset),
+                  let info = document.blocks[first + offset].tableRow else { continue }
+            for (column, runs) in info.cells.enumerated() where column < columnCount {
+                let (narrow, wide) = intrinsicWidths(of: runs)
+                minContent[column] = max(minContent[column], narrow)
+                maxContent[column] = max(maxContent[column], wide)
+            }
+        }
+
+        let pad = metrics.tableCellPadding.width * 2
+        let maxTotal = maxContent.reduce(0) { $0 + $1 + pad }
+        var widths: [CGFloat]
+        if maxTotal <= available {
+            // Everything fits unwrapped: columns take their natural width.
+            widths = maxContent.map { $0 + pad }
+        } else {
+            let minTotal = minContent.reduce(0) { $0 + $1 + pad }
+            if minTotal >= available {
+                // Not even min-content fits: squeeze proportionally (cells
+                // will wrap mid-word via forced breaks).
+                let squeeze = available / max(minTotal, 1)
+                widths = minContent.map { ($0 + pad) * squeeze }
+            } else {
+                // Start at min-content, grow each column proportionally to its
+                // flexibility (max − min) — the classic auto distribution.
+                let flex = zip(maxContent, minContent).map { max(0, $0 - $1) }
+                let flexTotal = flex.reduce(0, +)
+                let extra = available - minTotal
+                widths = (0..<columnCount).map { column in
+                    minContent[column] + pad + (flexTotal > 0
+                        ? extra * flex[column] / flexTotal
+                        : extra / CGFloat(columnCount))
+                }
+            }
+        }
+        tableWidths[tableIndex] = widths
+        return widths
+    }
+
+    /// (min-content, max-content) of one cell: longest unbreakable word, and
+    /// the full unwrapped width.
+    private func intrinsicWidths(of runs: [StyledRun]) -> (CGFloat, CGFloat) {
+        let unwrapped = shapeRuns(
+            runs, baseFontClass: .body, fonts: fonts, width: 100_000, scale: scale
+        )
+        let maxContent = unwrapped.lines.map(\.widthPts).max() ?? 0
+
+        let text = runs.map(\.text).joined()
+        var minContent: CGFloat = 0
+        if let longestWord = text.split(whereSeparator: \.isWhitespace).max(by: { $0.count < $1.count }) {
+            let word = shapeRuns(
+                [StyledRun(text: String(longestWord), traits: runs.first?.traits ?? [], color: .text)],
+                baseFontClass: .body, fonts: fonts, width: 100_000, scale: scale
+            )
+            minContent = word.lines.first?.widthPts ?? 0
+        }
+        return (min(minContent, maxContent), maxContent)
     }
 
     /// Swap a block's styled runs (async syntax highlighting). The text and
@@ -221,9 +366,9 @@ public final class LazyLayout {
     }
 
     private func compositeHeight(index: Int, blockHeight: CGFloat) -> CGFloat {
-        let kind = document.blocks[index].kind
-        let before = index == 0 ? 0 : spacingBefore(kind, metrics: metrics)
-        return before + blockHeight + spacingAfter(kind, metrics: metrics)
+        let block = document.blocks[index]
+        let before = index == 0 ? 0 : spacingBefore(block, metrics: metrics)
+        return before + blockHeight + spacingAfter(block, metrics: metrics)
     }
 
     // MARK: - Queries
@@ -255,7 +400,7 @@ public final class LazyLayout {
         }
         let cached = cache[index]!
         let block = document.blocks[index]
-        let before = index == 0 ? 0 : spacingBefore(block.kind, metrics: metrics)
+        let before = index == 0 ? 0 : spacingBefore(block, metrics: metrics)
         return BlockLayout(
             flatIndex: index,
             id: block.id,
@@ -298,6 +443,7 @@ public final class LazyLayout {
         self.contentWidth = contentWidth
         self.scale = scale
         cache.removeAll(keepingCapacity: true)
+        tableWidths.removeAll()
         tree.markAllEstimated()
     }
 }

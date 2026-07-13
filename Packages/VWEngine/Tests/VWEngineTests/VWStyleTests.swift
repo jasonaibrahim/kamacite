@@ -80,12 +80,26 @@ import VWParse
         #expect(doc.blocks[0].baseFontClass == .code)
     }
 
-    @Test func tableDegradesToMonoRows() {
-        let doc = flat("| a | b |\n| --- | --- |\n| 1 | 2 |")
+    @Test func tableFlattensToStructuredRows() {
+        let doc = flat("| a | b |\n| :-- | --: |\n| one | two |\n| three | four |")
         let rows = doc.blocks.filter { $0.kind == .tableRow }
-        #expect(rows.count == 2)
-        #expect(rows[0].runs[0].traits.contains(.bold))
-        #expect(rows[1].runs[0].text == "1   2")
+        #expect(rows.count == 3)
+        #expect(doc.tables.count == 1)
+        #expect(doc.tables[0].alignments == [.left, .right])
+        #expect(doc.tables[0].rowCount == 3)
+        #expect(doc.tables[0].firstRowFlatIndex == 0)
+
+        let header = rows[0].tableRow
+        #expect(header?.isHeader == true)
+        #expect(header?.cells.count == 2)
+        #expect(header?.cells[0].first?.traits.contains(.bold) == true)
+
+        let body = rows[1].tableRow
+        #expect(body?.isHeader == false)
+        #expect(body?.cells[1].first?.text == "two")
+        #expect(rows[2].tableRow?.isLastRow == true)
+        // Joined runs carry tab separators for copy/estimation.
+        #expect(rows[1].runs.map(\.text).joined() == "one\ttwo")
     }
 
     @Test func ruleSurvivesWithNoRuns() {

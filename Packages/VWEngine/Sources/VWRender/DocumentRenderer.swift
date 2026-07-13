@@ -136,22 +136,29 @@ public final class DocumentRenderer {
                 }
             }
 
-            for line in block.shaped.lines {
-                let baselineDev = textOrigin.y + Float(line.baselineDev)
+            for placed in block.shaped.positionedLines {
+                // Flow top rounds once (whole pixels); the line's baselineDev
+                // already encodes its stacking within the flow. x offsets stay
+                // fractional — subpixel buckets absorb them.
+                let lineOrigin = SIMD2<Float>(
+                    textOrigin.x + Float(placed.xOffsetPts * scale),
+                    textOrigin.y + Float((placed.flowTopPts * scale).rounded())
+                )
+                let baselineDev = lineOrigin.y + Float(placed.line.baselineDev)
                 if baselineDev < -64 || baselineDev > viewportHeightDev + 64 { continue }
 
-                for run in line.runs {
+                for run in placed.line.runs {
                     appendRun(
-                        run, textOrigin: textOrigin,
+                        run, textOrigin: lineOrigin,
                         theme: theme, backdropLuminance: localLuminance,
                         gray: &grayGlyphs, color: &colorGlyphs
                     )
                 }
-                for decoration in line.decorations {
+                for decoration in placed.line.decorations {
                     solidsAbove.append(SolidQuad(
                         origin: SIMD2(
-                            textOrigin.x + Float((decoration.rectPts.minX * scale).rounded()),
-                            textOrigin.y + Float((decoration.rectPts.minY * scale).rounded())
+                            lineOrigin.x + Float((decoration.rectPts.minX * scale).rounded()),
+                            lineOrigin.y + Float((decoration.rectPts.minY * scale).rounded())
                         ),
                         size: SIMD2(
                             Float((decoration.rectPts.width * scale).rounded()),

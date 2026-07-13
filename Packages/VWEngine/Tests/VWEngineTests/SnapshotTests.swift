@@ -51,9 +51,11 @@ wrapped text aligned under the first character
 let answer = 42 // mono on a background
 ```
 
-| col a | col b |
-| :---- | ----: |
-| one   | two   |
+| feature | status | latency budget |
+| :------ | :----: | -------------: |
+| parse into compact IR with spans preserved | **done** | 10ms |
+| viewport-lazy layout | done | 5ms |
+| `vw` CLI | done | 50ms |
 
 ---
 

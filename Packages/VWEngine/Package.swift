@@ -21,7 +21,7 @@ let package = Package(
             dependencies: ["VWCore", .product(name: "Markdown", package: "swift-markdown")]
         ),
         .target(name: "VWStyle", dependencies: ["VWCore", "VWParse"]),
-        .target(name: "VWText", dependencies: ["VWCore", "VWStyle"]),
+        .target(name: "VWText", dependencies: ["VWCore", "VWParse", "VWStyle"]),
         .target(name: "VWLayout", dependencies: ["VWText"]),
         .target(name: "VWRender", dependencies: ["VWText", "VWLayout"]),
         .target(name: "VWInteraction", dependencies: ["VWCore", "VWStyle", "VWText", "VWLayout"]),
