@@ -1,4 +1,4 @@
-name: vw
+name: kamacite
 options:
   bundleIdPrefix: com.xylophonexyz
   deploymentTarget:
@@ -24,26 +24,26 @@ settings:
       SWIFT_COMPILATION_MODE: wholemodule
 
 targets:
-  vw:
+  kamacite:
     type: application
     platform: macOS
     sources:
       - App/Sources
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.xylophonexyz.vw
-        PRODUCT_NAME: vw
+        PRODUCT_BUNDLE_IDENTIFIER: com.xylophonexyz.kamacite
+        PRODUCT_NAME: Kamacite
         SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor
     dependencies:
       - package: VWEngine
         product: VWViewer
-      - target: vw-cli
+      - target: kama-cli
         embed: false
     info:
       path: App/Info.plist
       properties:
-        CFBundleName: vw
-        CFBundleDisplayName: vw
+        CFBundleName: Kamacite
+        CFBundleDisplayName: Kamacite
         CFBundleShortVersionString: "0.1.0"
         CFBundleVersion: "1"
         LSMinimumSystemVersion: "15.0"
@@ -89,30 +89,30 @@ targets:
                 - text/markdown
                 - text/x-markdown
     postBuildScripts:
-      - name: Embed vw CLI helper
+      - name: Embed kama CLI helper
         script: |
           set -e
           HELPERS="${TARGET_BUILD_DIR}/${CONTENTS_FOLDER_PATH}/Helpers"
           mkdir -p "$HELPERS"
-          cp -f "${TARGET_BUILD_DIR}/vw-cli" "$HELPERS/vw"
+          cp -f "${TARGET_BUILD_DIR}/kama-cli" "$HELPERS/kama"
           # The helper must carry its own signature before the outer bundle is sealed.
-          codesign --force --sign - "$HELPERS/vw"
+          codesign --force --sign - "$HELPERS/kama"
         basedOnDependencyAnalysis: false
 
-  vw-cli:
+  kama-cli:
     type: tool
     platform: macOS
     sources:
       - CLI/Sources
     settings:
       base:
-        PRODUCT_NAME: vw-cli
+        PRODUCT_NAME: kama-cli
         SWIFT_DEFAULT_ACTOR_ISOLATION: nonisolated
 
 schemes:
-  vw:
+  kamacite:
     build:
       targets:
-        vw: all
+        kamacite: all
     run:
       config: Release

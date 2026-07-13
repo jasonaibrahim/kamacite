@@ -16,14 +16,14 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate {
         // Restoration reads archives at launch — explicitly off, per the speed budget.
         window.isRestorable = false
         window.tabbingMode = .disallowed
-        window.title = document?.url.lastPathComponent ?? "vw"
+        window.title = document?.url.lastPathComponent ?? "Kamacite"
         window.representedURL = document?.url
         // Any pixel not yet covered by content is theme-colored, never white.
         window.backgroundColor = .textBackgroundColor
         window.center()
         super.init(window: window)
         shouldCascadeWindows = true
-        windowFrameAutosaveName = "vw.document"
+        windowFrameAutosaveName = "kamacite.document"
         window.delegate = self
         contentViewController = DocumentViewController(document: document)
     }

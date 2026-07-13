@@ -1,8 +1,13 @@
-# vw
+# Kamacite
 
-A native macOS markdown viewer built for one thing: **the fastest markdown reading
-experience ever built**. Markdown is increasingly what LLMs produce; vw is the native,
-instant way to read it — not an IDE, not Electron.
+A native macOS markdown app built for one thing first: **the fastest markdown reading
+experience ever built**. Markdown is increasingly what LLMs produce; Kamacite is the
+native, instant way to read it — not an IDE, not Electron. Native AI editing is the
+roadmap; speed is the foundation.
+
+Kamacite is a nickel-iron metal that does not form on Earth — it arrives only inside
+meteorites, and etching it reveals hidden lattice patterns in the metal. Obsidian cooled
+in place; kamacite fell from the sky.
 
 The document surface is a custom Metal renderer (CoreText shaping → glyph atlas → GPU
 quads, the Zed/Ghostty architecture), written in Swift. Speed is the product: every
@@ -29,41 +34,42 @@ make build      # xcodegen generate + xcodebuild (Release)
 make run        # launch the app
 make test       # engine unit tests (headless, no app build)
 make bench      # cold-launch benchmark against the corpus
-make install    # copy to /Applications and symlink the `vw` CLI onto PATH
+make install    # copy to /Applications and symlink the `kama` CLI onto PATH
 make dev-link   # symlink the CLI against the build products (auto-updates per build)
 ```
 
 ## CLI
 
 ```sh
-vw notes.md            # open in the app; reuses a running instance (the warm path)
-vw --perf notes.md     # print launch/open phase timings to stderr (fresh launch)
-vw --version
+kama notes.md            # open in the app; reuses a running instance (the warm path)
+kama --perf notes.md     # print launch/open phase timings to stderr (fresh launch)
+kama --version
 ```
 
-The `vw` binary lives inside `vw.app/Contents/Helpers/` and is symlinked onto PATH by
-`make install` / `make dev-link`.
+The `kama` binary lives inside `Kamacite.app/Contents/Helpers/` and is symlinked onto
+PATH by `make install` / `make dev-link`.
 
 ## Layout
 
 ```
 App/                 AppKit shell: lifecycle, windows, menus, perf plumbing
-CLI/                 the `vw` command-line helper
+CLI/                 the `kama` command-line helper
 Packages/VWEngine/   the engine: parse → style → layout → render → interaction
 bench/               corpus + measurement harness (VWPERF JSON lines → p50/p95)
 project.yml          source of truth for the Xcode project (generated, gitignored)
 ```
 
 Engine target DAG: `VWCore → VWParse/VWStyle → VWText → VWLayout/VWRender →
-VWInteraction → VWViewer`. Everything below `VWViewer` is AppKit-free and unit-tests
-headlessly. Source positions (UTF-8 byte spans) thread through every stage — the anchor
-for future editing and commenting.
+VWInteraction → VWViewer`. (The `VW` prefix is a fossil from the project's working
+name — kept because module prefixes are internal.) Everything below `VWViewer` is
+AppKit-free and unit-tests headlessly. Source positions (UTF-8 byte spans) thread
+through every stage — the anchor for editing and commenting.
 
 ## Perf philosophy
 
 - `VW_PERF=1` prints a phase table (pre-main, open, read, parse, layout, present) after
   first present; `VW_PERF_JSON=1` emits machine-readable `VWPERF {...}` lines.
-- `vw --bench file.md` opens, reports, and exits — the app itself is the benchmark
-  subject, with no Launch Services noise.
+- `Kamacite --bench file.md` (the binary directly) opens, reports, and exits — the app
+  itself is the benchmark subject, with no Launch Services noise.
 - The blank-window baseline was recorded before any feature landed; `make bench` compares
   every change against the budgets above.

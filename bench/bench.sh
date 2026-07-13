@@ -8,9 +8,9 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-APP="${1:?usage: bench.sh path/to/vw.app [runs]}"
+APP="${1:?usage: bench.sh path/to/Kamacite.app [runs]}"
 RUNS="${2:-10}"
-BIN="$APP/Contents/MacOS/vw"
+BIN="$APP/Contents/MacOS/Kamacite"
 [[ -x "$BIN" ]] || { echo "error: $BIN not found (make build first)" >&2; exit 1; }
 
 SHA="$(git rev-parse --short HEAD 2>/dev/null || echo dev)"

@@ -1,6 +1,6 @@
 import AppKit
 
-// The vw CLI. Lives at vw.app/Contents/Helpers/vw and is symlinked onto PATH.
+// The kama CLI. Lives at Kamacite.app/Contents/Helpers/kama and is symlinked onto PATH.
 //
 // Opens files in the exact app bundle it ships inside — self-locating, so multiple
 // installed copies (DerivedData build + /Applications) never ambiguate — and reuses a
@@ -13,7 +13,7 @@ func fail(_ message: String, code: Int32) -> Never {
 
 func locateAppBundle() -> URL? {
     let invoked = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath()
-    // …/vw.app/Contents/Helpers/vw → three levels up is the bundle.
+    // …/Kamacite.app/Contents/Helpers/kama → three levels up is the bundle.
     let candidate = invoked
         .deletingLastPathComponent()
         .deletingLastPathComponent()
@@ -21,7 +21,7 @@ func locateAppBundle() -> URL? {
     if candidate.pathExtension == "app" {
         return candidate
     }
-    return NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.xylophonexyz.vw")
+    return NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.xylophonexyz.kamacite")
 }
 
 var perf = false
@@ -34,16 +34,16 @@ for argument in CommandLine.arguments.dropFirst() {
               let version = Bundle(url: appURL)?
                   .object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
         else {
-            fail("vw: cannot locate vw.app to determine version", code: 66)
+            fail("kama: cannot locate Kamacite.app to determine version", code: 66)
         }
-        print("vw \(version)")
+        print("kama \(version)")
         exit(0)
     case "--perf":
         perf = true
     case "--help", "-h":
         print("""
-        usage: vw [--perf] <file.md> …
-               vw --version
+        usage: kama [--perf] <file.md> …
+               kama --version
 
           --perf   print open/render phase timings to stderr (fresh launch only)
         """)
@@ -54,20 +54,20 @@ for argument in CommandLine.arguments.dropFirst() {
 }
 
 guard !paths.isEmpty else {
-    fail("usage: vw [--perf] <file.md> …", code: 64)
+    fail("usage: kama [--perf] <file.md> …", code: 64)
 }
 
 let cwd = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
 let urls: [URL] = paths.map { path in
     let url = URL(fileURLWithPath: path, relativeTo: cwd).standardizedFileURL
     guard FileManager.default.fileExists(atPath: url.path) else {
-        fail("vw: no such file: \(path)", code: 1)
+        fail("kama: no such file: \(path)", code: 1)
     }
     return url
 }
 
 guard let appURL = locateAppBundle() else {
-    fail("vw: cannot locate vw.app (expected to run from vw.app/Contents/Helpers)", code: 66)
+    fail("kama: cannot locate Kamacite.app (expected to run from Kamacite.app/Contents/Helpers)", code: 66)
 }
 
 let configuration = NSWorkspace.OpenConfiguration()
@@ -79,7 +79,7 @@ configuration.addsToRecentItems = true
 var perfFileURL: URL?
 if perf {
     let url = FileManager.default.temporaryDirectory
-        .appendingPathComponent("vw-perf-\(ProcessInfo.processInfo.processIdentifier).log")
+        .appendingPathComponent("kama-perf-\(ProcessInfo.processInfo.processIdentifier).log")
     FileManager.default.createFile(atPath: url.path, contents: nil)
     perfFileURL = url
     // Environment applies only when this open launches a fresh instance.
@@ -94,10 +94,10 @@ NSWorkspace.shared.open(urls, withApplicationAt: appURL, configuration: configur
 // Completion arrives on an arbitrary queue; park the main runloop rather than
 // blocking on a semaphore (safe regardless of which queue LS calls back on).
 if CFRunLoopRunInMode(.defaultMode, 15, false) != .stopped {
-    fail("vw: timed out waiting for Launch Services", code: 65)
+    fail("kama: timed out waiting for Launch Services", code: 65)
 }
 if let openError {
-    fail("vw: \(openError)", code: 65)
+    fail("kama: \(openError)", code: 65)
 }
 
 if let perfFileURL {
@@ -114,9 +114,9 @@ if let perfFileURL {
         FileHandle.standardError.write(Data(report.utf8))
     } else {
         FileHandle.standardError.write(Data("""
-        vw: --perf timings unavailable — vw was already running, so this open \
+        kama: --perf timings unavailable — Kamacite was already running, so this open \
         reused the warm instance (its environment was fixed at launch). \
-        Quit vw and re-run for a fresh-launch measurement.\n
+        Quit Kamacite and re-run for a fresh-launch measurement.\n
         """.utf8))
     }
 }

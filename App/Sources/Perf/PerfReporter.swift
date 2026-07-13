@@ -63,7 +63,7 @@ final class PerfReporter {
 
     func openFailed(_ trace: OpenTrace) {
         if benchMode {
-            fputs("vw: bench open failed: \(trace.label)\n", stderr)
+            fputs("kama: bench open failed: \(trace.label)\n", stderr)
             exit(1)
         }
     }
@@ -99,7 +99,7 @@ final class PerfReporter {
             firstPixelMs = (lastAt - trace.openedAt) * 1000
         }
 
-        var out = "vw perf  \(trace.mode.rawValue)  \(trace.label)\(sizeSuffix(trace.bytes))\n"
+        var out = "kama perf  \(trace.mode.rawValue)  \(trace.label)\(sizeSuffix(trace.bytes))\n"
         for row in rows {
             out += "  \(pad(row.name))\(fmt(row.ms)) ms\n"
         }

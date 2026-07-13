@@ -4,7 +4,7 @@ enum MainMenuBuilder {
     static func build(recents: RecentDocumentsMenuDelegate) -> NSMenu {
         let appMenu = NSMenu()
         appMenu.addItem(
-            withTitle: "About vw",
+            withTitle: "About Kamacite",
             action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)),
             keyEquivalent: "")
         appMenu.addItem(.separator())
@@ -12,7 +12,7 @@ enum MainMenuBuilder {
         appMenu.addItem(withTitle: "Services", action: nil, keyEquivalent: "").submenu = servicesMenu
         appMenu.addItem(.separator())
         appMenu.addItem(
-            withTitle: "Hide vw",
+            withTitle: "Hide Kamacite",
             action: #selector(NSApplication.hide(_:)),
             keyEquivalent: "h")
         let hideOthers = appMenu.addItem(
@@ -26,7 +26,7 @@ enum MainMenuBuilder {
             keyEquivalent: "")
         appMenu.addItem(.separator())
         appMenu.addItem(
-            withTitle: "Quit vw",
+            withTitle: "Quit Kamacite",
             action: #selector(NSApplication.terminate(_:)),
             keyEquivalent: "q")
 
@@ -82,13 +82,13 @@ enum MainMenuBuilder {
 
         let helpMenu = NSMenu(title: "Help")
         helpMenu.addItem(
-            withTitle: "vw Help",
+            withTitle: "Kamacite Help",
             action: #selector(NSApplication.showHelp(_:)),
             keyEquivalent: "?")
 
         let main = NSMenu()
         for (title, submenu) in [
-            ("vw", appMenu), ("File", fileMenu), ("Edit", editMenu),
+            ("Kamacite", appMenu), ("File", fileMenu), ("Edit", editMenu),
             ("View", viewMenu), ("Window", windowMenu), ("Help", helpMenu),
         ] {
             let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")

@@ -1,0 +1,515 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 54;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		097A1C6CA5A864ED6ABDFBCA /* VWViewer in Frameworks */ = {isa = PBXBuildFile; productRef = 43A1D050866C4E5E84B1E82A /* VWViewer */; };
+		2AB5DE8CD4490822588EF12E /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = DCCD56129703A39C372B1764 /* main.swift */; };
+		3DDA9B094BFC5792B43278F0 /* BenchArguments.swift in Sources */ = {isa = PBXBuildFile; fileRef = 600ABCF8D93D7A7F02E77661 /* BenchArguments.swift */; };
+		430EC8D3132782B578F672B5 /* PerfReporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2EC078790EFC2A95BECEDBE /* PerfReporter.swift */; };
+		4FEECC5FDC848A1A14760CE3 /* MainMenu.swift in Sources */ = {isa = PBXBuildFile; fileRef = 03A4D5879648810A9771ECB8 /* MainMenu.swift */; };
+		553CD447101D5EECD20BB908 /* Document.swift in Sources */ = {isa = PBXBuildFile; fileRef = 666A3ABF111BFB3E3556B842 /* Document.swift */; };
+		6E6CB9813BB4D7635CCD739D /* DocumentViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 31B59F11059AF176E1E58955 /* DocumentViewController.swift */; };
+		815A52E5829D799FE5A9D72C /* DocumentController.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB5439A1D24C5EF728B6C00B /* DocumentController.swift */; };
+		A72D0D0AA11265415B45A2A0 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = B83BA4E5E2F5B429B36BA20F /* AppDelegate.swift */; };
+		D56DD36000375479A9317021 /* DocumentWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3384341A063FE8E47C0DE5D2 /* DocumentWindowController.swift */; };
+		E6D73F16A79B54F7031150B6 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A3AC0288576A198CAA231E9 /* main.swift */; };
+		E97D7977D6702CAFD46A7808 /* LaunchClock.swift in Sources */ = {isa = PBXBuildFile; fileRef = 167377BFB93816FE373AB31F /* LaunchClock.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		00C8B7B73CAD54F8FAFC6717 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 15F08850933EE549A8F9A9C8 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = FC8101F3CEB4F0EFBEAC816B;
+			remoteInfo = "vw-cli";
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		03A4D5879648810A9771ECB8 /* MainMenu.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainMenu.swift; sourceTree = "<group>"; };
+		167377BFB93816FE373AB31F /* LaunchClock.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchClock.swift; sourceTree = "<group>"; };
+		31B59F11059AF176E1E58955 /* DocumentViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocumentViewController.swift; sourceTree = "<group>"; };
+		3384341A063FE8E47C0DE5D2 /* DocumentWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocumentWindowController.swift; sourceTree = "<group>"; };
+		600ABCF8D93D7A7F02E77661 /* BenchArguments.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BenchArguments.swift; sourceTree = "<group>"; };
+		666A3ABF111BFB3E3556B842 /* Document.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Document.swift; sourceTree = "<group>"; };
+		750BF5199943D27B72D905DF /* VWEngine */ = {isa = PBXFileReference; lastKnownFileType = folder; name = VWEngine; path = Packages/VWEngine; sourceTree = SOURCE_ROOT; };
+		8A3AC0288576A198CAA231E9 /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
+		9F59F80D0D6D61BDDA309F00 /* vw-cli */ = {isa = PBXFileReference; includeInIndex = 0; path = "vw-cli"; sourceTree = BUILT_PRODUCTS_DIR; };
+		AB5439A1D24C5EF728B6C00B /* DocumentController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocumentController.swift; sourceTree = "<group>"; };
+		B83BA4E5E2F5B429B36BA20F /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
+		DCCD56129703A39C372B1764 /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
+		E666463FC8F63B6460BD0A96 /* vw.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = vw.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		F2EC078790EFC2A95BECEDBE /* PerfReporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PerfReporter.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		2D07EB95CAB11125C5A48487 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				097A1C6CA5A864ED6ABDFBCA /* VWViewer in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		33175DADD4868088AB794C52 /* Sources */ = {
+			isa = PBXGroup;
+			children = (
+				B83BA4E5E2F5B429B36BA20F /* AppDelegate.swift */,
+				666A3ABF111BFB3E3556B842 /* Document.swift */,
+				AB5439A1D24C5EF728B6C00B /* DocumentController.swift */,
+				31B59F11059AF176E1E58955 /* DocumentViewController.swift */,
+				3384341A063FE8E47C0DE5D2 /* DocumentWindowController.swift */,
+				DCCD56129703A39C372B1764 /* main.swift */,
+				03A4D5879648810A9771ECB8 /* MainMenu.swift */,
+				A3A6170B17056B42CB80675C /* Perf */,
+			);
+			path = Sources;
+			sourceTree = "<group>";
+		};
+		4F2488BF2AB242B0126E82ED = {
+			isa = PBXGroup;
+			children = (
+				ED4E5552D2ADB24BBB7EB98A /* App */,
+				DF43D16D80B3AD179DD971B5 /* CLI */,
+				DD1E02ADAE829CD01099EF90 /* Packages */,
+				7513036593ABAC1255D467D9 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		7513036593ABAC1255D467D9 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				9F59F80D0D6D61BDDA309F00 /* vw-cli */,
+				E666463FC8F63B6460BD0A96 /* vw.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		7956CCC61DC554BC5A78D3E1 /* Sources */ = {
+			isa = PBXGroup;
+			children = (
+				8A3AC0288576A198CAA231E9 /* main.swift */,
+			);
+			path = Sources;
+			sourceTree = "<group>";
+		};
+		A3A6170B17056B42CB80675C /* Perf */ = {
+			isa = PBXGroup;
+			children = (
+				600ABCF8D93D7A7F02E77661 /* BenchArguments.swift */,
+				167377BFB93816FE373AB31F /* LaunchClock.swift */,
+				F2EC078790EFC2A95BECEDBE /* PerfReporter.swift */,
+			);
+			path = Perf;
+			sourceTree = "<group>";
+		};
+		DD1E02ADAE829CD01099EF90 /* Packages */ = {
+			isa = PBXGroup;
+			children = (
+				750BF5199943D27B72D905DF /* VWEngine */,
+			);
+			path = Packages;
+			sourceTree = "<group>";
+		};
+		DF43D16D80B3AD179DD971B5 /* CLI */ = {
+			isa = PBXGroup;
+			children = (
+				7956CCC61DC554BC5A78D3E1 /* Sources */,
+			);
+			path = CLI;
+			sourceTree = "<group>";
+		};
+		ED4E5552D2ADB24BBB7EB98A /* App */ = {
+			isa = PBXGroup;
+			children = (
+				33175DADD4868088AB794C52 /* Sources */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		3D5A47B5C09DBB80D6A13342 /* vw */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = B4B5BF35DCDDEA0EEA69EDF2 /* Build configuration list for PBXNativeTarget "vw" */;
+			buildPhases = (
+				E8B38129C62230D8BAD0336B /* Sources */,
+				2D07EB95CAB11125C5A48487 /* Frameworks */,
+				0C6137EB7AFCBAED37A51EC2 /* Embed vw CLI helper */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				543AA1C209A43BCB9494A63D /* PBXTargetDependency */,
+			);
+			name = vw;
+			packageProductDependencies = (
+				43A1D050866C4E5E84B1E82A /* VWViewer */,
+			);
+			productName = vw;
+			productReference = E666463FC8F63B6460BD0A96 /* vw.app */;
+			productType = "com.apple.product-type.application";
+		};
+		FC8101F3CEB4F0EFBEAC816B /* vw-cli */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 8C3C8276313520C20A3EB7FE /* Build configuration list for PBXNativeTarget "vw-cli" */;
+			buildPhases = (
+				A080710718DCEA9DD2D1256E /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = "vw-cli";
+			productName = "vw-cli";
+			productReference = 9F59F80D0D6D61BDDA309F00 /* vw-cli */;
+			productType = "com.apple.product-type.tool";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		15F08850933EE549A8F9A9C8 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					3D5A47B5C09DBB80D6A13342 = {
+						ProvisioningStyle = Manual;
+					};
+					FC8101F3CEB4F0EFBEAC816B = {
+						ProvisioningStyle = Manual;
+					};
+				};
+			};
+			buildConfigurationList = CB3BF14CABE754FA5891FE1C /* Build configuration list for PBXProject "vw" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 4F2488BF2AB242B0126E82ED;
+			packageReferences = (
+				9895802F644E25AA622A4927 /* XCLocalSwiftPackageReference "Packages/VWEngine" */,
+			);
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				3D5A47B5C09DBB80D6A13342 /* vw */,
+				FC8101F3CEB4F0EFBEAC816B /* vw-cli */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		0C6137EB7AFCBAED37A51EC2 /* Embed vw CLI helper */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Embed vw CLI helper";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -e\nHELPERS=\"${TARGET_BUILD_DIR}/${CONTENTS_FOLDER_PATH}/Helpers\"\nmkdir -p \"$HELPERS\"\ncp -f \"${TARGET_BUILD_DIR}/vw-cli\" \"$HELPERS/vw\"\n# The helper must carry its own signature before the outer bundle is sealed.\ncodesign --force --sign - \"$HELPERS/vw\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		A080710718DCEA9DD2D1256E /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				E6D73F16A79B54F7031150B6 /* main.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		E8B38129C62230D8BAD0336B /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A72D0D0AA11265415B45A2A0 /* AppDelegate.swift in Sources */,
+				3DDA9B094BFC5792B43278F0 /* BenchArguments.swift in Sources */,
+				553CD447101D5EECD20BB908 /* Document.swift in Sources */,
+				815A52E5829D799FE5A9D72C /* DocumentController.swift in Sources */,
+				6E6CB9813BB4D7635CCD739D /* DocumentViewController.swift in Sources */,
+				D56DD36000375479A9317021 /* DocumentWindowController.swift in Sources */,
+				E97D7977D6702CAFD46A7808 /* LaunchClock.swift in Sources */,
+				4FEECC5FDC848A1A14760CE3 /* MainMenu.swift in Sources */,
+				430EC8D3132782B578F672B5 /* PerfReporter.swift in Sources */,
+				2AB5DE8CD4490822588EF12E /* main.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		543AA1C209A43BCB9494A63D /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = FC8101F3CEB4F0EFBEAC816B /* vw-cli */;
+			targetProxy = 00C8B7B73CAD54F8FAFC6717 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		18B567B4627E215F37FAB3C1 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Manual;
+				COPY_PHASE_STRIP = NO;
+				DEAD_CODE_STRIPPING = YES;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_HARDENED_RUNTIME = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		A67A60A95B5264D5F47B7B04 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				COMBINE_HIDPI_IMAGES = YES;
+				INFOPLIST_FILE = App/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.xylophonexyz.vw;
+				PRODUCT_NAME = vw;
+				SDKROOT = macosx;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+			};
+			name = Debug;
+		};
+		AD02C1E489DC0DA5DE6C52D2 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				COMBINE_HIDPI_IMAGES = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "com.xylophonexyz.vw-cli";
+				PRODUCT_NAME = "vw-cli";
+				SDKROOT = macosx;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = nonisolated;
+			};
+			name = Release;
+		};
+		BA921447CCEBE52A6DF29EC7 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Manual;
+				COPY_PHASE_STRIP = NO;
+				DEAD_CODE_STRIPPING = YES;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_HARDENED_RUNTIME = NO;
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		DE9A57C4700DC9D4312C11E5 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				COMBINE_HIDPI_IMAGES = YES;
+				INFOPLIST_FILE = App/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.xylophonexyz.vw;
+				PRODUCT_NAME = vw;
+				SDKROOT = macosx;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+			};
+			name = Release;
+		};
+		ED869CC6F6EF355D0DF3995A /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				COMBINE_HIDPI_IMAGES = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "com.xylophonexyz.vw-cli";
+				PRODUCT_NAME = "vw-cli";
+				SDKROOT = macosx;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = nonisolated;
+			};
+			name = Debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		8C3C8276313520C20A3EB7FE /* Build configuration list for PBXNativeTarget "vw-cli" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				ED869CC6F6EF355D0DF3995A /* Debug */,
+				AD02C1E489DC0DA5DE6C52D2 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		B4B5BF35DCDDEA0EEA69EDF2 /* Build configuration list for PBXNativeTarget "vw" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A67A60A95B5264D5F47B7B04 /* Debug */,
+				DE9A57C4700DC9D4312C11E5 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		CB3BF14CABE754FA5891FE1C /* Build configuration list for PBXProject "vw" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				18B567B4627E215F37FAB3C1 /* Debug */,
+				BA921447CCEBE52A6DF29EC7 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		9895802F644E25AA622A4927 /* XCLocalSwiftPackageReference "Packages/VWEngine" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Packages/VWEngine;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		43A1D050866C4E5E84B1E82A /* VWViewer */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = VWViewer;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = 15F08850933EE549A8F9A9C8 /* Project object */;
+}
