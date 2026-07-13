@@ -53,6 +53,13 @@ public final class DocumentEngineView: NSView {
     public var onOpenLink: ((URL) -> Void)?
     private var mouseDownViewPoint: CGPoint?
 
+    // Font zoom (⌘+/⌘−/⌘0), persisted across launches.
+    private static let fontScaleDefaultsKey = "kamacite.fontScale"
+    private var fontScale: CGFloat = {
+        let stored = UserDefaults.standard.double(forKey: "kamacite.fontScale")
+        return stored > 0 ? CGFloat(min(max(stored, 0.5), 3)) : 1
+    }()
+
     // Overlay scrollbar.
     private var scrollbarAlpha: CGFloat = 0
     private var scrollbarHovered = false
@@ -71,6 +78,27 @@ public final class DocumentEngineView: NSView {
         session.onContentUpdate = { [weak self] in
             self?.setNeedsRender()
         }
+        session.onContentSplice = { [weak self] in
+            self?.handleContentSplice()
+        }
+    }
+
+    /// The background full parse replaced the first-paint slice. Block indices
+    /// in the visible (slice) region are stable by construction, so preparing
+    /// the visible range with the viewport top as anchor keeps glass steady
+    /// while the document grows to its full height.
+    private func handleContentSplice() {
+        guard let layout = session.layout else { return }
+        let adjustment = layout.prepare(
+            docRange: expand(visibleDocRange, by: bounds.height),
+            anchorY: max(0, visibleDocRange.lowerBound)
+        )
+        if adjustment != 0 {
+            scrollOffsetPts += adjustment
+        }
+        scrollOffsetPts = min(max(0, scrollOffsetPts), maxScrollPts)
+        showScrollbar() // content height jumped; flash the new proportions
+        setNeedsRender()
     }
 
     @available(*, unavailable)
@@ -137,6 +165,9 @@ public final class DocumentEngineView: NSView {
         metalLayer.contentsScale = scale
         metalLayer.drawableSize = CGSize(width: bounds.width * scale, height: bounds.height * scale)
 
+        if fontScale != 1 {
+            session.setTheme(resolvedTheme())
+        }
         session.prepare(contentWidth: contentWidthPts, scale: scale, mark: mark)
         if let layout = session.layout {
             layout.prepare(docRange: expand(visibleDocRange, by: bounds.height), anchorY: 0)
@@ -199,11 +230,47 @@ public final class DocumentEngineView: NSView {
 
     public override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        guard window != nil, displayLink == nil else { return }
+        guard let window, displayLink == nil else { return }
         let link = displayLink(target: self, selector: #selector(displayTick))
         link.add(to: .main, forMode: .common)
         link.isPaused = true
         displayLink = link
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(occlusionChanged),
+            name: NSWindow.didChangeOcclusionStateNotification, object: window
+        )
+    }
+
+    @objc private func occlusionChanged(_ notification: Notification) {
+        // Render the frame that was skipped while occluded.
+        if let window, window.occlusionState.contains(.visible), frameDirty {
+            setNeedsRender()
+        }
+    }
+
+    // MARK: - Accessibility (minimal: VoiceOver reads the document)
+
+    public override func isAccessibilityElement() -> Bool { true }
+
+    public override func accessibilityRole() -> NSAccessibility.Role? { .textArea }
+
+    public override func accessibilityRoleDescription() -> String? { "markdown document" }
+
+    public override func accessibilityLabel() -> String? {
+        baseURL?.lastPathComponent ?? "Markdown document"
+    }
+
+    public override func accessibilityValue() -> Any? {
+        guard let document = session.document else { return nil }
+        // Built on demand — VoiceOver queries only when focused.
+        var text = ""
+        for block in document.blocks {
+            if !text.isEmpty {
+                text += block.isContinuation ? "" : "\n"
+            }
+            text += block.runs.map(\.text).joined()
+        }
+        return text
     }
 
     // MARK: - Frame building (lazy layout + anchoring + selection)
@@ -379,7 +446,13 @@ public final class DocumentEngineView: NSView {
         guard let renderer = ensureRenderer(), session.layout != nil,
               bounds.width > 0, bounds.height > 0
         else { return }
-        if metalLayer.presentsWithTransaction {
+        // Occluded windows don't render; the frame stays dirty and draws when
+        // the window becomes visible again.
+        if let window, !window.occlusionState.contains(.visible) {
+            frameDirty = true
+            return
+        }
+        if metalLayer.presentsWithTransaction, !inLiveResize {
             metalLayer.presentsWithTransaction = false
         }
         let frame = buildFrame()
@@ -392,8 +465,27 @@ public final class DocumentEngineView: NSView {
             overlayPills: scrollbarPills(),
             target: drawable.texture, commandBuffer: commandBuffer
         )
-        commandBuffer.present(drawable)
-        commandBuffer.commit()
+        if metalLayer.presentsWithTransaction {
+            // Live resize: the frame must land in the SAME transaction as the
+            // window's new geometry or content visibly lags the window edge.
+            commandBuffer.commit()
+            commandBuffer.waitUntilScheduled()
+            drawable.present()
+        } else {
+            commandBuffer.present(drawable)
+            commandBuffer.commit()
+        }
+    }
+
+    public override func viewWillStartLiveResize() {
+        super.viewWillStartLiveResize()
+        metalLayer.presentsWithTransaction = true
+    }
+
+    public override func viewDidEndLiveResize() {
+        super.viewDidEndLiveResize()
+        metalLayer.presentsWithTransaction = false
+        reshapeAndRender()
     }
 
     private func reshapeAndRender() {
@@ -428,12 +520,58 @@ public final class DocumentEngineView: NSView {
 
     // MARK: - Appearance (mandatory: live re-render, no re-layout)
 
+    private func resolvedTheme() -> Theme {
+        let isDark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        var theme: Theme = isDark ? .dark : .light
+        if fontScale != 1 {
+            theme.metrics = theme.metrics.scaled(by: fontScale)
+        }
+        return theme
+    }
+
     public override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
-        let isDark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        let newTheme: Theme = isDark ? .dark : .light
+        let newTheme = resolvedTheme()
         guard newTheme.name != session.theme.name else { return }
+        // Same metrics (only the palette differs) ⇒ setTheme keeps the layout;
+        // this is a pure re-render.
         session.setTheme(newTheme)
+        setNeedsRender()
+    }
+
+    // MARK: - Font zoom (a font change is a re-layout, never a re-parse)
+
+    @objc public func zoomIn(_ sender: Any?) {
+        applyFontScale(fontScale * 1.1)
+    }
+
+    @objc public func zoomOut(_ sender: Any?) {
+        applyFontScale(fontScale / 1.1)
+    }
+
+    @objc public func resetZoom(_ sender: Any?) {
+        applyFontScale(1)
+    }
+
+    private func applyFontScale(_ requested: CGFloat) {
+        let clamped = min(max(requested, 0.5), 3)
+        guard abs(clamped - fontScale) > 0.001, let oldLayout = session.layout else { return }
+
+        // Anchor the top visible block across the relayout.
+        let docTop = max(0, visibleDocRange.lowerBound)
+        let anchorIndex = oldLayout.blockIndex(at: docTop)
+
+        fontScale = clamped
+        UserDefaults.standard.set(Double(clamped), forKey: Self.fontScaleDefaultsKey)
+        session.setTheme(resolvedTheme()) // metrics changed → layout torn down
+        session.prepare(contentWidth: contentWidthPts, scale: scale)
+        guard let layout = session.layout else { return }
+
+        let newTop = layout.yOffset(of: anchorIndex)
+        scrollOffsetPts = newTop + Self.verticalInsetPts
+        layout.prepare(docRange: expand(visibleDocRange, by: bounds.height), anchorY: max(0, newTop))
+        scrollOffsetPts = min(max(0, layout.yOffset(of: anchorIndex) + Self.verticalInsetPts), maxScrollPts)
+        showScrollbar()
         setNeedsRender()
     }
 

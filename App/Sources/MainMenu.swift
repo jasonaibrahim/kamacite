@@ -59,6 +59,21 @@ enum MainMenuBuilder {
             keyEquivalent: "a")
 
         let viewMenu = NSMenu(title: "View")
+        // Zoom lands on DocumentEngineView via the responder chain; a font
+        // change is a re-layout, never a re-parse.
+        viewMenu.addItem(
+            withTitle: "Zoom In",
+            action: NSSelectorFromString("zoomIn:"),
+            keyEquivalent: "+")
+        viewMenu.addItem(
+            withTitle: "Zoom Out",
+            action: NSSelectorFromString("zoomOut:"),
+            keyEquivalent: "-")
+        viewMenu.addItem(
+            withTitle: "Actual Size",
+            action: NSSelectorFromString("resetZoom:"),
+            keyEquivalent: "0")
+        viewMenu.addItem(.separator())
         let fullScreen = viewMenu.addItem(
             withTitle: "Enter Full Screen",
             action: #selector(NSWindow.toggleFullScreen(_:)),

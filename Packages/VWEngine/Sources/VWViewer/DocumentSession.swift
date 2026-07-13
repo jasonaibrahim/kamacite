@@ -1,4 +1,5 @@
 import Foundation
+import QuartzCore
 import VWLayout
 import VWParse
 import VWStyle
@@ -17,6 +18,13 @@ public final class DocumentSession {
     /// Fired when async work (syntax highlighting) changed content that's
     /// already on glass — the view re-renders.
     public var onContentUpdate: (() -> Void)?
+    /// Fired after the background full parse replaced a first-paint slice —
+    /// the view re-anchors its scroll and re-renders. Layout has already been
+    /// rebuilt when this fires.
+    public var onContentSplice: (() -> Void)?
+    /// True while showing the slice of a huge document (full parse underway).
+    public private(set) var isSliced = false
+    private var fullParseStart: CFTimeInterval = 0
     private var highlightRequested: Set<Int> = []
 
     public init(data: Data, theme: Theme) {
@@ -27,12 +35,25 @@ public final class DocumentSession {
 
     /// Parse/flatten once, then create (or reflow) the lazy layout. `mark`
     /// receives "parse"/"style"/"estimate" on the passes that ran.
+    ///
+    /// Huge documents take the first-paint slice: the opening ~256KB parses
+    /// synchronously (glass in milliseconds), the whole document parses on a
+    /// background task and splices in when ready.
     public func prepare(contentWidth: CGFloat, scale: CGFloat, mark: ((String) -> Void)? = nil) {
         if document == nil {
-            let tree = parseMarkdown(data: data)
-            mark?("parse")
-            document = flatten(tree)
-            mark?("style")
+            if let sliceLength = firstPaintSliceLength(of: data) {
+                let tree = parseMarkdown(data: data.prefix(sliceLength))
+                mark?("parse")
+                document = flatten(tree)
+                mark?("style")
+                isSliced = true
+                scheduleFullParse()
+            } else {
+                let tree = parseMarkdown(data: data)
+                mark?("parse")
+                document = flatten(tree)
+                mark?("style")
+            }
         }
         guard let document else { return }
 
@@ -45,6 +66,40 @@ public final class DocumentSession {
             )
             mark?("estimate")
         }
+    }
+
+    // MARK: - First-paint slice
+
+    private func scheduleFullParse() {
+        fullParseStart = CACurrentMediaTime()
+        let data = self.data
+        Task.detached(priority: .userInitiated) { [weak self] in
+            let tree = parseMarkdown(data: data)
+            let flat = flatten(tree)
+            await self?.completeFullParse(flat)
+        }
+    }
+
+    private func completeFullParse(_ flat: FlatDocument) {
+        guard isSliced else { return }
+        isSliced = false
+        document = flat
+        // Highlight bookkeeping restarts against the full document's indices.
+        highlightRequested.removeAll()
+        if let old = layout {
+            layout = LazyLayout(
+                document: flat, fonts: fonts, metrics: theme.metrics,
+                contentWidth: old.contentWidth, scale: old.scale
+            )
+        }
+        if ProcessInfo.processInfo.environment["VW_PERF"] == "1" {
+            let elapsed = (CACurrentMediaTime() - fullParseStart) * 1000
+            FileHandle.standardError.write(Data(String(
+                format: "kama perf  splice  full document ready %+.0f ms after first paint (%d blocks)\n",
+                elapsed, flat.blocks.count
+            ).utf8))
+        }
+        onContentSplice?()
     }
 
     // MARK: - Async syntax highlighting

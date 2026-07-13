@@ -62,6 +62,10 @@ public struct FlatBlock: Sendable {
     public var codeLanguage: String?
     /// Structured cell data for `.tableRow` blocks.
     public var tableRow: TableRowInfo?
+    /// Mega-block fragments: true on every fragment after the first.
+    public var isContinuation = false
+    /// True on every fragment except the last (suppresses trailing spacing).
+    public var continues = false
     public var runs: [StyledRun]
 
     /// The font class shaping uses for the line grid; runs may add traits.
@@ -242,16 +246,103 @@ private struct Flattener {
         return .text(["•", "◦", "▪"][listDepth % 3])
     }
 
+    /// One CTTypesetter flow must never see a mega-block: a single multi-MB
+    /// paragraph would stall shaping for seconds. Fragments this size shape in
+    /// low milliseconds and stack seamlessly (zero inter-fragment spacing).
+    private static let maxBlockUTF16 = 64 * 1024
+
     private mutating func emit(
         _ source: ContentBlock, kind: FlatBlockKind, marker: ListMarker? = nil,
         language: String? = nil, runs: [StyledRun], allowEmpty: Bool = false
     ) {
         guard allowEmpty || runs.contains(where: { !$0.text.isEmpty }) else { return }
-        output.append(FlatBlock(
-            id: source.id, span: source.span, kind: kind,
-            quoteDepth: quoteDepth, listDepth: listDepth,
-            marker: marker, codeLanguage: language, runs: runs
-        ))
+
+        let chunks = Self.chunkRuns(runs, limit: Self.maxBlockUTF16)
+        for (index, chunk) in chunks.enumerated() {
+            var block = FlatBlock(
+                id: source.id, span: source.span, kind: kind,
+                quoteDepth: quoteDepth, listDepth: listDepth,
+                marker: index == 0 ? marker : nil, codeLanguage: language, runs: chunk
+            )
+            block.isContinuation = index > 0
+            block.continues = index < chunks.count - 1
+            output.append(block)
+        }
+    }
+
+    /// Split runs into chunks of ≤ `limit` UTF-16 units, keeping run spans
+    /// byte-exact by partitioning at measured UTF-8 prefix lengths. Oversized
+    /// single runs split at the nearest whitespace before the limit (falling
+    /// back to a hard character-boundary split).
+    static func chunkRuns(_ runs: [StyledRun], limit: Int) -> [[StyledRun]] {
+        let total = runs.reduce(0) { $0 + $1.text.utf16.count }
+        guard total > limit else { return [runs] }
+
+        var chunks: [[StyledRun]] = []
+        var current: [StyledRun] = []
+        var currentLength = 0
+
+        func flush() {
+            if !current.isEmpty {
+                chunks.append(current)
+                current = []
+                currentLength = 0
+            }
+        }
+
+        var queue = runs[...]
+        while var run = queue.first.map({ $0 }) {
+            queue = queue.dropFirst()
+            var runLength = run.text.utf16.count
+
+            while currentLength + runLength > limit {
+                let room = limit - currentLength
+                if room < 512 {
+                    // Not worth splitting into a sliver; start a fresh chunk.
+                    flush()
+                    if runLength <= limit { break }
+                    continue
+                }
+                // Split the run at a whitespace near the room boundary.
+                let text = run.text
+                var splitIndex = text.utf16.index(text.utf16.startIndex, offsetBy: room)
+                    .samePosition(in: text) ?? text.index(text.startIndex, offsetBy: 0)
+                if splitIndex == text.startIndex {
+                    // UTF-16 boundary fell inside a scalar; back off one unit.
+                    splitIndex = text.utf16.index(text.utf16.startIndex, offsetBy: room - 1)
+                        .samePosition(in: text) ?? text.endIndex
+                }
+                if let space = text[..<splitIndex].lastIndex(where: \.isWhitespace),
+                   text.distance(from: space, to: splitIndex) < 2048 {
+                    splitIndex = text.index(after: space)
+                }
+                guard splitIndex > text.startIndex, splitIndex < text.endIndex else {
+                    flush()
+                    break
+                }
+
+                let head = String(text[..<splitIndex])
+                let tail = String(text[splitIndex...])
+                var headRun = run
+                headRun.text = head
+                var tailRun = run
+                tailRun.text = tail
+                if let span = run.span {
+                    let headBytes = head.utf8.count
+                    headRun.span = SourceSpan(startUTF8: span.startUTF8, endUTF8: span.startUTF8 + headBytes)
+                    tailRun.span = SourceSpan(startUTF8: span.startUTF8 + headBytes, endUTF8: span.endUTF8)
+                }
+                current.append(headRun)
+                flush()
+                run = tailRun
+                runLength = run.text.utf16.count
+            }
+
+            current.append(run)
+            currentLength += runLength
+        }
+        flush()
+        return chunks.isEmpty ? [runs] : chunks
     }
 
     private mutating func flattenTable(

@@ -98,6 +98,7 @@ public final class DocumentRenderer {
         commandBuffer: MTLCommandBuffer
     ) {
         scaleChanged(scale)
+        atlas.flushIfOverBudget()
 
         // Rounded ONCE per frame — per-quad rounding of a shared offset is how
         // scroll shimmer happens.

@@ -16,6 +16,9 @@ import VWText
 /// (separators live inside the row); the table as a whole gets breathing room
 /// via its first and last rows.
 func spacingBefore(_ block: FlatBlock, metrics: Metrics) -> CGFloat {
+    if block.isContinuation {
+        return 0 // mega-block fragments stack seamlessly
+    }
     if let row = block.tableRow {
         return row.rowIndex == 0 ? 10 : 0
     }
@@ -27,6 +30,9 @@ func spacingBefore(_ block: FlatBlock, metrics: Metrics) -> CGFloat {
 }
 
 func spacingAfter(_ block: FlatBlock, metrics: Metrics) -> CGFloat {
+    if block.continues {
+        return 0 // more fragments of the same block follow
+    }
     if let row = block.tableRow {
         return row.isLastRow ? 12 : 0
     }

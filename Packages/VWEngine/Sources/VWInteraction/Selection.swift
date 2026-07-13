@@ -221,19 +221,22 @@ public func selectedPlainText(
     let end = selection.end
     guard !selection.isEmpty, start.blockIndex < document.blocks.count else { return "" }
 
-    var parts: [String] = []
+    var result = ""
     for index in start.blockIndex...min(end.blockIndex, document.blocks.count - 1) {
-        let text = document.blocks[index].runs.map(\.text).joined()
+        let block = document.blocks[index]
+        let text = block.runs.map(\.text).joined()
         let ns = text as NSString
         let from = index == start.blockIndex ? min(start.utf16Offset, ns.length) : 0
         let to = index == end.blockIndex ? min(end.utf16Offset, ns.length) : ns.length
-        guard to > from else {
-            parts.append("")
-            continue
+        if index > start.blockIndex {
+            // Fragments of a split mega-block rejoin without a synthetic newline.
+            result += block.isContinuation ? "" : "\n"
         }
-        parts.append(ns.substring(with: NSRange(location: from, length: to - from)))
+        if to > from {
+            result += ns.substring(with: NSRange(location: from, length: to - from))
+        }
     }
-    return parts.joined(separator: "\n")
+    return result
 }
 
 /// Byte range into the ORIGINAL markdown source covering the selection — the

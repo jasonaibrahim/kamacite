@@ -14,6 +14,13 @@ import Metal
 final class GlyphAtlas {
     static let pageSize = 1024
     static let subpixelBuckets = 4
+    /// Memory ceiling: 8 gray pages (8 MB) + 4 color pages (16 MB). Exceeding
+    /// it between frames triggers a full flush — the next frame re-rasterizes
+    /// its viewport (~10ms once) and the working set starts clean. Documents
+    /// with enormous glyph diversity (CJK) stay bounded instead of growing
+    /// a page per screenful forever.
+    static let maxGrayPages = 8
+    static let maxColorPages = 4
 
     struct Key: Hashable {
         let fontIndex: Int
@@ -83,9 +90,23 @@ final class GlyphAtlas {
     /// nil = glyph has no ink (spaces, newlines); cached to skip re-measuring.
     private var entries: [Key: Entry?] = [:]
 
+    var entryCount: Int { entries.count }
+
     init(device: MTLDevice, scale: CGFloat) {
         self.device = device
         self.scale = scale
+    }
+
+    /// Enforce the page budget BETWEEN frames only — mid-frame instances hold
+    /// page indices, so eviction must never run while a frame is encoding.
+    /// Returns true when a flush happened.
+    @discardableResult
+    func flushIfOverBudget() -> Bool {
+        guard grayPages.count > Self.maxGrayPages || colorPages.count > Self.maxColorPages else {
+            return false
+        }
+        flush(scale: scale)
+        return true
     }
 
     /// Drop every entry and page. Called on backingScaleFactor change: bitmaps

@@ -1,0 +1,31 @@
+{
+  "recorded": "2026-07-12",
+  "milestone": "P8 sign-off",
+  "machine": "Apple M1 Max, macOS 26.5 (Darwin 25.5.0)",
+  "method": "process start → MTLDrawable presented handler (glass time); p50 of n=10 unless noted",
+  "budgets_and_results": {
+    "blank_window_cold_ms": { "budget": null, "p50": 143.4, "p95": 151.2 },
+    "small_2kb_cold_ms": { "budget": 400, "p50": 154.2, "p95": 161.9 },
+    "typical_50kb_cold_ms": { "budget": 400, "p50": 152.6, "p95": 156.7 },
+    "large_5mb_cold_ms": { "budget": 700, "p50": 170.2, "p95": 183.1 },
+    "huge_100mb_cold_first_viewport_ms": { "budget": 2000, "single_run": 169.3 },
+    "typical_50kb_warm_ms": { "budget": 150, "single_run": 22.2 },
+    "large_5mb_warm_ms": { "budget": 400, "single_run": 47.8 },
+    "huge_100mb_warm_ms": { "budget": null, "single_run": 46.1 },
+    "scroll_frame_large_5mb_ms": {
+      "budget_120hz": 8.33,
+      "p50": 0.67, "p95": 0.90, "p99": 1.96, "worst": 3.52,
+      "note": "480 frames, fully serialized encode+GPU per frame (pessimistic), scrollbar included, 65 of 35344 blocks resident"
+    },
+    "first_paint_slice": {
+      "large_5mb_full_parse_after_first_paint_ms": 425,
+      "huge_100mb_full_parse_after_first_paint_ms": 8199,
+      "huge_full_block_count": 704644
+    }
+  },
+  "notes": [
+    "All numbers measured with selection structures, appearance reactivity, scrollbar, and async syntax highlighting active — no bench-only fast paths.",
+    "Cold p95 excludes the one-time Gatekeeper scan of a freshly signed binary (~500-900ms first launch of a new build).",
+    "Documents >1MB open via the first-paint slice (fence-aware ≤256KB sync parse); the full parse splices in on a background task with viewport anchoring."
+  ]
+}

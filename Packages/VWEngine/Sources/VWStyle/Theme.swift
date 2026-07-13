@@ -84,6 +84,29 @@ public struct Metrics: Sendable, Equatable {
 
     public init() {}
 
+    /// Uniformly scaled metrics — the ⌘+/⌘− zoom path. Everything scales except
+    /// the hairline rule thickness.
+    public func scaled(by factor: CGFloat) -> Metrics {
+        var scaled = self
+        scaled.bodySize = bodySize * factor
+        scaled.codeSize = codeSize * factor
+        scaled.headingSizes = headingSizes.map { $0 * factor }
+        scaled.paragraphSpacing = paragraphSpacing * factor
+        scaled.headingSpacingBefore = headingSpacingBefore * factor
+        scaled.headingSpacingAfter = headingSpacingAfter * factor
+        scaled.codeBlockSpacing = codeBlockSpacing * factor
+        scaled.codeBlockPadding = codeBlockPadding * factor
+        scaled.listItemSpacing = listItemSpacing * factor
+        scaled.ruleSpacing = ruleSpacing * factor
+        scaled.indentWidth = indentWidth * factor
+        scaled.tableCellPadding = CGSize(
+            width: tableCellPadding.width * factor,
+            height: tableCellPadding.height * factor
+        )
+        scaled.checkboxSize = checkboxSize * factor
+        return scaled
+    }
+
     public func size(for fontClass: FontClass) -> CGFloat {
         switch fontClass {
         case .body: bodySize
