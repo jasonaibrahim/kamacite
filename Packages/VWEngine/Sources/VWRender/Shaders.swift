@@ -29,7 +29,7 @@ struct PillInstance {
     float2 size;
     float4 color;    // sRGB-encoded, non-premultiplied
     float radius;    // corner radius, device pixels
-    float _pad0;
+    float stroke;    // 0 = filled; >0 = inside border of this width
     float _pad1;
     float _pad2;
 };
@@ -100,6 +100,7 @@ struct PillVaryings {
     float2 local;     // fragment position within the quad, device pixels
     float2 halfSize;
     float radius;
+    float stroke;
     float4 color;
 };
 
@@ -114,6 +115,7 @@ vertex PillVaryings pill_vertex(uint vid [[vertex_id]],
     out.local = corner * p.size;
     out.halfSize = p.size * 0.5;
     out.radius = min(p.radius, min(p.size.x, p.size.y) * 0.5);
+    out.stroke = p.stroke;
     out.color = p.color;
     return out;
 }
@@ -122,6 +124,10 @@ fragment float4 pill_fragment(PillVaryings in [[stage_in]]) {
     float2 q = abs(in.local - in.halfSize) - (in.halfSize - in.radius);
     float d = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - in.radius;
     float coverage = saturate(0.5 - d);
+    if (in.stroke > 0.0) {
+        // Inside border: subtract the interior beyond the stroke width.
+        coverage -= saturate(0.5 - (d + in.stroke));
+    }
     float alpha = coverage * in.color.a;
     return float4(in.color.rgb * alpha, alpha);
 }

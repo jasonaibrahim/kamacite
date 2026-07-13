@@ -32,7 +32,7 @@ public final class DocumentRenderer {
         var size: SIMD2<Float>
         var color: SIMD4<Float>
         var radius: Float
-        var _pad0: Float = 0
+        var stroke: Float = 0
         var _pad1: Float = 0
         var _pad2: Float = 0
     }
@@ -109,6 +109,8 @@ public final class DocumentRenderer {
 
         var solidsBelow: [SolidQuad] = []
         var solidsAbove: [SolidQuad] = []
+        // Document-space pills (checkboxes) — drawn above backgrounds, below text.
+        var contentPills: [PillQuad] = []
         var grayGlyphs: [Int: [GlyphQuad]] = [:]
         var colorGlyphs: [Int: [GlyphQuad]] = [:]
 
@@ -162,6 +164,40 @@ public final class DocumentRenderer {
                         theme: theme, backdropLuminance: localLuminance,
                         gray: &grayGlyphs, color: &colorGlyphs
                     )
+                }
+            }
+
+            // Drawn checkbox: rounded box in the marker column; the checkmark
+            // goes through the normal glyph pipeline on top of the fill.
+            if let checkbox = block.shaped.checkbox {
+                let boxSize = Float((checkbox.boxSizePts * scale).rounded())
+                let boxOrigin = SIMD2<Float>(
+                    textOrigin.x - boxSize - Float((8 * scale).rounded()),
+                    textOrigin.y + Float((checkbox.boxTopPts * scale).rounded())
+                )
+                let cornerRadius = Float(3.5 * scale)
+                if checkbox.checked {
+                    contentPills.append(PillQuad(
+                        origin: boxOrigin,
+                        size: SIMD2(boxSize, boxSize),
+                        color: theme.color(.accent),
+                        radius: cornerRadius
+                    ))
+                    for run in checkbox.checkRuns {
+                        appendRun(
+                            run, textOrigin: boxOrigin,
+                            theme: theme, backdropLuminance: localLuminance,
+                            gray: &grayGlyphs, color: &colorGlyphs
+                        )
+                    }
+                } else {
+                    contentPills.append(PillQuad(
+                        origin: boxOrigin,
+                        size: SIMD2(boxSize, boxSize),
+                        color: theme.color(.checkboxBorder),
+                        radius: cornerRadius,
+                        stroke: Float(max(1, (1.5 * scale).rounded()))
+                    ))
                 }
             }
 
@@ -229,6 +265,7 @@ public final class DocumentRenderer {
         encoder.setVertexBytes(&viewport, length: MemoryLayout<SIMD2<Float>>.size, index: 1)
 
         drawSolids(solidsBelow, encoder: encoder)
+        drawPills(contentPills, encoder: encoder)
         encoder.setRenderPipelineState(grayPipeline)
         for (pageIndex, quads) in grayGlyphs.sorted(by: { $0.key < $1.key }) {
             drawGlyphs(quads, texture: atlas.grayPages[pageIndex].texture, encoder: encoder)

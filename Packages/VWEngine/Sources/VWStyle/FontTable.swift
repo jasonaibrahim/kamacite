@@ -12,7 +12,7 @@ public final class FontTable: @unchecked Sendable {
         let traits: RunTraits
     }
 
-    private let metrics: Metrics
+    public let metrics: Metrics
     private let lock = NSLock()
     private var cache: [Key: CTFont] = [:]
     private var averageWidthCache: [FontClass: CGFloat] = [:]

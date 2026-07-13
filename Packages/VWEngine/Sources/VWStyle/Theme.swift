@@ -30,6 +30,8 @@ public struct Theme: Sendable, Equatable {
         .rule: SIMD4(0.30, 0.30, 0.32, 1),
         .selection: SIMD4(0.22, 0.36, 0.55, 1),
         .quoteBar: SIMD4(0.36, 0.36, 0.40, 1),
+        .checkboxBorder: SIMD4(0.45, 0.45, 0.50, 1),
+        .checkboxCheck: SIMD4(1, 1, 1, 1),
         .codeKeyword: SIMD4(1.0, 0.48, 0.70, 1),
         .codeString: SIMD4(1.0, 0.53, 0.44, 1),
         .codeComment: SIMD4(0.50, 0.56, 0.60, 1),
@@ -46,6 +48,8 @@ public struct Theme: Sendable, Equatable {
         .rule: SIMD4(0.84, 0.84, 0.86, 1),
         .selection: SIMD4(0.70, 0.84, 1.0, 1),
         .quoteBar: SIMD4(0.80, 0.80, 0.83, 1),
+        .checkboxBorder: SIMD4(0.70, 0.70, 0.75, 1),
+        .checkboxCheck: SIMD4(1, 1, 1, 1),
         .codeKeyword: SIMD4(0.68, 0.24, 0.64, 1),
         .codeString: SIMD4(0.77, 0.10, 0.09, 1),
         .codeComment: SIMD4(0.36, 0.42, 0.47, 1),
@@ -75,6 +79,8 @@ public struct Metrics: Sendable, Equatable {
     /// Horizontal/vertical padding inside table cells; column widths include
     /// the horizontal component.
     public var tableCellPadding = CGSize(width: 10, height: 5)
+    /// Task-list checkbox box edge length.
+    public var checkboxSize: CGFloat = 14
 
     public init() {}
 

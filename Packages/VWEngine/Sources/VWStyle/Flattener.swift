@@ -57,7 +57,7 @@ public struct FlatBlock: Sendable {
     public var listDepth: Int
     /// List bullet/number/checkbox, drawn right-aligned in the indent column
     /// before the text — NOT part of `runs`, so wrapped lines hang correctly.
-    public var marker: String?
+    public var marker: ListMarker?
     /// Fence info string for code blocks; drives async syntax highlighting.
     public var codeLanguage: String?
     /// Structured cell data for `.tableRow` blocks.
@@ -82,7 +82,7 @@ public struct FlatBlock: Sendable {
     public init(
         id: BlockID, span: SourceSpan, kind: FlatBlockKind,
         quoteDepth: Int = 0, listDepth: Int = 0,
-        marker: String? = nil, codeLanguage: String? = nil,
+        marker: ListMarker? = nil, codeLanguage: String? = nil,
         tableRow: TableRowInfo? = nil, runs: [StyledRun]
     ) {
         self.id = id
@@ -95,6 +95,13 @@ public struct FlatBlock: Sendable {
         self.tableRow = tableRow
         self.runs = runs
     }
+}
+
+public enum ListMarker: Sendable, Equatable {
+    /// Bullets and ordinal numbers, shaped as glyphs.
+    case text(String)
+    /// Task-list checkbox, DRAWN (rounded box + checkmark), not a glyph.
+    case checkbox(checked: Bool)
 }
 
 public enum FlatBlockKind: Sendable, Equatable {
@@ -193,13 +200,23 @@ private struct Flattener {
         }
     }
 
-    private mutating func flattenListItem(_ item: ListItem, marker: String) {
+    private mutating func flattenListItem(_ item: ListItem, marker: ListMarker) {
         var children = item.children[...]
 
         if let first = children.first, case .paragraph(let inlines) = first.kind {
             children = children.dropFirst()
-            emit(first, kind: .listItem, marker: marker, runs: runs(from: inlines, color: baseColor))
-        } else if !marker.isEmpty {
+            var itemRuns = runs(from: inlines, color: baseColor)
+            if case .checkbox(checked: true) = marker {
+                // A completed task reads as done: struck through and muted.
+                for i in itemRuns.indices {
+                    itemRuns[i].traits.insert(.strikethrough)
+                    if itemRuns[i].color == .text {
+                        itemRuns[i].color = .secondaryText
+                    }
+                }
+            }
+            emit(first, kind: .listItem, marker: marker, runs: itemRuns)
+        } else {
             // Item that doesn't start with a paragraph: marker on its own line.
             let id = children.first?.id ?? BlockID(rawValue: .max)
             output.append(FlatBlock(
@@ -214,19 +231,19 @@ private struct Flattener {
         listDepth -= 1
     }
 
-    private func marker(ordered: Bool, start: Int, index: Int, checkbox: Bool?) -> String {
+    private func marker(ordered: Bool, start: Int, index: Int, checkbox: Bool?) -> ListMarker {
         if let checkbox {
-            return checkbox ? "☑" : "☐"
+            return .checkbox(checked: checkbox)
         }
         if ordered {
-            return "\(start + index)."
+            return .text("\(start + index).")
         }
         // Bullet glyph cycles with nesting depth, like every serious reader.
-        return ["•", "◦", "▪"][listDepth % 3]
+        return .text(["•", "◦", "▪"][listDepth % 3])
     }
 
     private mutating func emit(
-        _ source: ContentBlock, kind: FlatBlockKind, marker: String? = nil,
+        _ source: ContentBlock, kind: FlatBlockKind, marker: ListMarker? = nil,
         language: String? = nil, runs: [StyledRun], allowEmpty: Bool = false
     ) {
         guard allowEmpty || runs.contains(where: { !$0.text.isEmpty }) else { return }

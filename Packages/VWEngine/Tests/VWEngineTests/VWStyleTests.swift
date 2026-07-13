@@ -34,24 +34,37 @@ import VWParse
         let doc = flat("- alpha\n- beta\n  - nested\n\n1. first")
         let items = doc.blocks.filter { $0.kind == .listItem }
         #expect(items.count == 4)
-        #expect(items[0].marker == "•")
+        #expect(items[0].marker == .text("•"))
         #expect(items[0].listDepth == 0)
         // Text indents one unit past the marker column (hanging indent).
         #expect(items[0].indentLevel == 1)
         let nested = items.first { $0.runs.map(\.text).joined().contains("nested") }
         #expect(nested?.listDepth == 1)
-        #expect(nested?.marker == "◦")
+        #expect(nested?.marker == .text("◦"))
         #expect(nested?.indentLevel == 2)
         let ordered = items.first { $0.runs.map(\.text).joined().contains("first") }
-        #expect(ordered?.marker == "1.")
+        #expect(ordered?.marker == .text("1."))
     }
 
     @Test func checkboxMarkers() {
         let doc = flat("- [x] done\n- [ ] todo")
-        #expect(doc.blocks[0].marker == "☑")
-        #expect(doc.blocks[1].marker == "☐")
+        #expect(doc.blocks[0].marker == .checkbox(checked: true))
+        #expect(doc.blocks[1].marker == .checkbox(checked: false))
         // The marker is NOT part of the copyable text.
         #expect(doc.blocks[0].runs.map(\.text).joined() == "done")
+    }
+
+    @Test func checkedItemsAreStruckAndMuted() {
+        let doc = flat("- [x] shipped the thing with a [link](https://x.y)\n- [ ] still open")
+        let done = doc.blocks[0]
+        #expect(done.runs.allSatisfy { $0.traits.contains(.strikethrough) })
+        // Plain text mutes; the link keeps its accent color (still struck).
+        #expect(done.runs.first { $0.text.contains("shipped") }?.color == .secondaryText)
+        #expect(done.runs.first { $0.link != nil }?.color == .accent)
+
+        let open = doc.blocks[1]
+        #expect(open.runs.allSatisfy { !$0.traits.contains(.strikethrough) })
+        #expect(open.runs.first?.color == .text)
     }
 
     @Test func linksCarryDestination() {

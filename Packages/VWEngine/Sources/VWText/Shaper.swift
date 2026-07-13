@@ -29,6 +29,8 @@ public struct ShapedBlockText: Sendable {
     /// wraps with a hanging indent.
     public let marker: [ShapedGlyphRun]?
     public let markerWidthPts: CGFloat
+    /// Drawn task-list checkbox (box + checkmark), replacing a glyph marker.
+    public let checkbox: CheckboxMarker?
     /// Table rows only: one shaped flow per cell. When set, `lines` is empty.
     public let cells: [ShapedCell]?
     public let heightPts: CGFloat
@@ -39,6 +41,7 @@ public struct ShapedBlockText: Sendable {
     public init(
         lines: [ShapedTextLine], lineHeightPts: CGFloat, text: String,
         marker: [ShapedGlyphRun]? = nil, markerWidthPts: CGFloat = 0,
+        checkbox: CheckboxMarker? = nil,
         cells: [ShapedCell]? = nil, heightPts: CGFloat? = nil, utf16Length: Int? = nil
     ) {
         self.lines = lines
@@ -46,10 +49,31 @@ public struct ShapedBlockText: Sendable {
         self.text = text
         self.marker = marker
         self.markerWidthPts = markerWidthPts
+        self.checkbox = checkbox
         self.cells = cells
         self.heightPts = heightPts ?? CGFloat(lines.count) * lineHeightPts
         self.utf16Length = utf16Length
             ?? lines.last.map { $0.utf16Range.location + $0.utf16Range.length } ?? 0
+    }
+}
+
+/// A drawn checkbox: rounded box in the marker column, checkmark glyphs when
+/// checked. The renderer draws the box as a pill (filled accent when checked,
+/// stroked border when not) and the check through the normal glyph pipeline.
+public struct CheckboxMarker: Sendable {
+    public let checked: Bool
+    public let boxSizePts: CGFloat
+    /// Box top relative to the block-text top, points (centers the box on the
+    /// first line's cap height).
+    public let boxTopPts: CGFloat
+    /// Checkmark glyphs positioned relative to the BOX's top-left, device px.
+    public let checkRuns: [ShapedGlyphRun]
+
+    public init(checked: Bool, boxSizePts: CGFloat, boxTopPts: CGFloat, checkRuns: [ShapedGlyphRun]) {
+        self.checked = checked
+        self.boxSizePts = boxSizePts
+        self.boxTopPts = boxTopPts
+        self.checkRuns = checkRuns
     }
 }
 
@@ -205,16 +229,82 @@ public func shapeBlock(
         block.runs, baseFontClass: block.baseFontClass,
         fonts: fonts, width: width, scale: scale
     )
-    guard let markerText = block.marker, !markerText.isEmpty,
-          let firstLine = shaped.lines.first
-    else { return shaped }
+    guard let marker = block.marker, let firstLine = shaped.lines.first else { return shaped }
 
-    let (markerRuns, markerWidth) = shapeMarker(
-        markerText, fonts: fonts, baselineDev: firstLine.baselineDev, scale: scale
-    )
-    return ShapedBlockText(
-        lines: shaped.lines, lineHeightPts: shaped.lineHeightPts, text: shaped.text,
-        marker: markerRuns, markerWidthPts: markerWidth
+    switch marker {
+    case .text(let markerText):
+        guard !markerText.isEmpty else { return shaped }
+        let (markerRuns, markerWidth) = shapeMarker(
+            markerText, fonts: fonts, baselineDev: firstLine.baselineDev, scale: scale
+        )
+        return ShapedBlockText(
+            lines: shaped.lines, lineHeightPts: shaped.lineHeightPts, text: shaped.text,
+            marker: markerRuns, markerWidthPts: markerWidth
+        )
+    case .checkbox(let checked):
+        let checkbox = shapeCheckbox(
+            checked: checked, baseFontClass: block.baseFontClass, fonts: fonts, scale: scale
+        )
+        return ShapedBlockText(
+            lines: shaped.lines, lineHeightPts: shaped.lineHeightPts, text: shaped.text,
+            markerWidthPts: checkbox.boxSizePts, checkbox: checkbox
+        )
+    }
+}
+
+/// Geometry + checkmark for a drawn checkbox, centered on the first line's
+/// cap height (matches how a leading glyph would sit optically).
+private func shapeCheckbox(
+    checked: Bool, baseFontClass: FontClass, fonts: FontTable, scale: CGFloat
+) -> CheckboxMarker {
+    let size = fonts.metrics.checkboxSize
+    let bodyFont = fonts.font(for: baseFontClass, traits: [])
+    let slot = fonts.lineSlot(for: baseFontClass)
+    let capCenter = slot.ascent - CTFontGetCapHeight(bodyFont) / 2
+    let boxTop = capCenter - size / 2
+
+    var checkRuns: [ShapedGlyphRun] = []
+    if checked {
+        let checkFont = fonts.font(for: .body, traits: .bold)
+        let sized = CTFontCreateCopyWithAttributes(checkFont, size * 0.68, nil, nil)
+        let attributed = NSAttributedString(string: "✓", attributes: [
+            NSAttributedString.Key(kCTFontAttributeName as String): sized
+        ])
+        let ctLine = CTLineCreateWithAttributedString(attributed)
+        let lineWidth = CGFloat(CTLineGetTypographicBounds(ctLine, nil, nil, nil))
+        // Center the check inside the box; positions are box-relative dev px.
+        let baselineInBox = size / 2 + CTFontGetCapHeight(sized) / 2
+        let xInset = (size - lineWidth) / 2
+
+        let runArray = CTLineGetGlyphRuns(ctLine)
+        for runIndex in 0..<CFArrayGetCount(runArray) {
+            let ctRun = unsafeBitCast(CFArrayGetValueAtIndex(runArray, runIndex), to: CTRun.self)
+            let glyphCount = CTRunGetGlyphCount(ctRun)
+            guard glyphCount > 0 else { continue }
+            var glyphs = [CGGlyph](repeating: 0, count: glyphCount)
+            var positions = [CGPoint](repeating: .zero, count: glyphCount)
+            CTRunGetGlyphs(ctRun, CFRange(location: 0, length: 0), &glyphs)
+            CTRunGetPositions(ctRun, CFRange(location: 0, length: 0), &positions)
+            let font = runAttribute(ctRun, key: kCTFontAttributeName).map {
+                unsafeBitCast($0, to: CTFont.self)
+            } ?? sized
+            checkRuns.append(ShapedGlyphRun(
+                font: font,
+                isColorGlyphs: false,
+                color: .checkboxCheck,
+                glyphs: glyphs,
+                positionsDev: positions.map {
+                    CGPoint(
+                        x: (xInset + $0.x) * scale,
+                        y: (baselineInBox * scale).rounded() - $0.y * scale
+                    )
+                }
+            ))
+        }
+    }
+
+    return CheckboxMarker(
+        checked: checked, boxSizePts: size, boxTopPts: boxTop, checkRuns: checkRuns
     )
 }
 

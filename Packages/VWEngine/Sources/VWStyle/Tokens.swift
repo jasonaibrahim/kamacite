@@ -14,6 +14,10 @@ public enum ColorToken: Sendable, Hashable, CaseIterable {
     case selection
     /// Blockquote gutter bar.
     case quoteBar
+    /// Task-list checkbox: border of the empty box, and the checkmark drawn
+    /// over the accent-filled checked box.
+    case checkboxBorder
+    case checkboxCheck
     // Syntax highlighting (color-only by design: same fonts, same advances,
     // so applying highlights never changes layout).
     case codeKeyword
