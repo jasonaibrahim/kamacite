@@ -23,7 +23,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         if let file = bench.file {
-            // Bench runs exec the binary directly — no odoc event, the file is argv.
+            // Direct-binary open (bench or plain argv) — no odoc event.
             DocumentController.shared.open(urls: [file])
         } else if bench.benchMode {
             DocumentController.shared.openBlankWindow()  // shell-only baseline

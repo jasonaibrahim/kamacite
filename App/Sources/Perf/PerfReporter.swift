@@ -42,11 +42,16 @@ final class PerfReporter {
     private var emitJSON = false
     private var benchMode = false
     private var coldTraceTaken = false
+    /// When set, timing output is ALSO appended here. LS-launched apps send
+    /// stderr to the unified log; this file is how `vw --perf` gets the
+    /// numbers back to the user's terminal.
+    private var perfFilePath: String?
 
     func configure(with bench: BenchArguments) {
         let env = ProcessInfo.processInfo.environment
         benchMode = bench.benchMode
-        enabled = benchMode || env["VW_PERF"] == "1"
+        perfFilePath = env["VW_PERF_FILE"]
+        enabled = benchMode || env["VW_PERF"] == "1" || perfFilePath != nil
         emitJSON = benchMode || env["VW_PERF_JSON"] == "1"
     }
 
@@ -102,6 +107,7 @@ final class PerfReporter {
         let basis = trace.mode == .cold ? "(process start → glass)" : "(open → glass)"
         out += "  \(pad("first pixel"))\(fmt(firstPixelMs)) ms   \(basis)\n"
         fputs(out, stderr)
+        appendToPerfFile(out)
 
         if emitJSON {
             var fields: [(String, String)] = [
@@ -117,6 +123,19 @@ final class PerfReporter {
             fields.append(("first_pixel_ms", String(format: "%.2f", firstPixelMs)))
             let json = "{" + fields.map { "\"\($0.0)\":\($0.1)" }.joined(separator: ",") + "}"
             fputs("VWPERF \(json)\n", stderr)
+            appendToPerfFile("VWPERF \(json)\n")
+        }
+    }
+
+    private func appendToPerfFile(_ text: String) {
+        guard let perfFilePath else { return }
+        let url = URL(fileURLWithPath: perfFilePath)
+        if let handle = try? FileHandle(forWritingTo: url) {
+            handle.seekToEndOfFile()
+            handle.write(Data(text.utf8))
+            try? handle.close()
+        } else {
+            try? Data(text.utf8).write(to: url)
         }
     }
 

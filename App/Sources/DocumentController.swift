@@ -18,6 +18,16 @@ final class DocumentController: NSObject {
     }
 
     func open(url: URL) {
+        // One window per document: re-opening (Finder, CLI, recents) focuses
+        // the existing window instead of duplicating it.
+        let standardized = url.standardizedFileURL.path
+        if let existing = windowControllers.first(where: {
+            $0.viewedDocument?.url.standardizedFileURL.path == standardized
+        }) {
+            existing.showWindow(nil)
+            return
+        }
+
         let trace = PerfReporter.shared.beginTrace(label: url.lastPathComponent)
         let document: Document
         do {

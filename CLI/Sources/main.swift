@@ -73,9 +73,17 @@ guard let appURL = locateAppBundle() else {
 let configuration = NSWorkspace.OpenConfiguration()
 configuration.activates = true
 configuration.addsToRecentItems = true
+
+// An LS-launched app's stderr goes to the unified log, not this terminal —
+// so --perf hands the app a file to append timings to, and we tail it.
+var perfFileURL: URL?
 if perf {
+    let url = FileManager.default.temporaryDirectory
+        .appendingPathComponent("vw-perf-\(ProcessInfo.processInfo.processIdentifier).log")
+    FileManager.default.createFile(atPath: url.path, contents: nil)
+    perfFileURL = url
     // Environment applies only when this open launches a fresh instance.
-    configuration.environment = ["VW_PERF": "1"]
+    configuration.environment = ["VW_PERF": "1", "VW_PERF_FILE": url.path]
 }
 
 nonisolated(unsafe) var openError: String?
@@ -90,5 +98,26 @@ if CFRunLoopRunInMode(.defaultMode, 15, false) != .stopped {
 }
 if let openError {
     fail("vw: \(openError)", code: 65)
+}
+
+if let perfFileURL {
+    defer { try? FileManager.default.removeItem(at: perfFileURL) }
+    // Wait for the app to finish its first present and flush (cold opens run
+    // a few hundred ms; poll up to 5s).
+    var report = ""
+    for _ in 0..<50 {
+        report = (try? String(contentsOf: perfFileURL, encoding: .utf8)) ?? ""
+        if report.contains("first pixel") { break }
+        usleep(100_000)
+    }
+    if report.contains("first pixel") {
+        FileHandle.standardError.write(Data(report.utf8))
+    } else {
+        FileHandle.standardError.write(Data("""
+        vw: --perf timings unavailable — vw was already running, so this open \
+        reused the warm instance (its environment was fixed at launch). \
+        Quit vw and re-run for a fresh-launch measurement.\n
+        """.utf8))
+    }
 }
 exit(0)
