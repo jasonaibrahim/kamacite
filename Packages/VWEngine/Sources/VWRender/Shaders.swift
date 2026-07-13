@@ -24,6 +24,16 @@ struct SolidInstance {
     float4 color;
 };
 
+struct PillInstance {
+    float2 origin;   // top-left, device pixels
+    float2 size;
+    float4 color;    // sRGB-encoded, non-premultiplied
+    float radius;    // corner radius, device pixels
+    float _pad0;
+    float _pad1;
+    float _pad2;
+};
+
 struct Varyings {
     float4 position [[position]];
     float2 uv;
@@ -81,5 +91,38 @@ fragment float4 glyph_fragment_color(Varyings in [[stage_in]],
 
 fragment float4 solid_fragment(Varyings in [[stage_in]]) {
     return float4(in.color.rgb * in.color.a, in.color.a);
+}
+
+// Rounded-rect pills (the overlay scrollbar): analytic SDF coverage with a
+// one-pixel anti-aliased edge — no textures, resolution-independent.
+struct PillVaryings {
+    float4 position [[position]];
+    float2 local;     // fragment position within the quad, device pixels
+    float2 halfSize;
+    float radius;
+    float4 color;
+};
+
+vertex PillVaryings pill_vertex(uint vid [[vertex_id]],
+                                uint iid [[instance_id]],
+                                constant PillInstance *instances [[buffer(0)]],
+                                constant float2 &viewport [[buffer(1)]]) {
+    PillInstance p = instances[iid];
+    float2 corner = float2(float(vid & 1u), float((vid >> 1u) & 1u));
+    PillVaryings out;
+    out.position = project(p.origin + corner * p.size, viewport);
+    out.local = corner * p.size;
+    out.halfSize = p.size * 0.5;
+    out.radius = min(p.radius, min(p.size.x, p.size.y) * 0.5);
+    out.color = p.color;
+    return out;
+}
+
+fragment float4 pill_fragment(PillVaryings in [[stage_in]]) {
+    float2 q = abs(in.local - in.halfSize) - (in.halfSize - in.radius);
+    float d = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - in.radius;
+    float coverage = saturate(0.5 - d);
+    float alpha = coverage * in.color.a;
+    return float4(in.color.rgb * alpha, alpha);
 }
 """

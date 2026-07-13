@@ -13,6 +13,7 @@ public final class RendererCore: @unchecked Sendable {
         let solid: MTLRenderPipelineState
         let gray: MTLRenderPipelineState
         let color: MTLRenderPipelineState
+        let pill: MTLRenderPipelineState
     }
 
     public static let shared = RendererCore()
@@ -72,7 +73,8 @@ public final class RendererCore: @unchecked Sendable {
             device: device,
             solid: try pipeline(vertex: "solid_vertex", fragment: "solid_fragment"),
             gray: try pipeline(vertex: "glyph_vertex", fragment: "glyph_fragment_gray"),
-            color: try pipeline(vertex: "glyph_vertex", fragment: "glyph_fragment_color")
+            color: try pipeline(vertex: "glyph_vertex", fragment: "glyph_fragment_color"),
+            pill: try pipeline(vertex: "pill_vertex", fragment: "pill_fragment")
         )
     }
 }

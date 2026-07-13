@@ -26,11 +26,23 @@ public final class DocumentRenderer {
         var color: SIMD4<Float>
     }
 
+    /// Matches PillInstance in the MSL source (stride 48).
+    struct PillQuad {
+        var origin: SIMD2<Float>
+        var size: SIMD2<Float>
+        var color: SIMD4<Float>
+        var radius: Float
+        var _pad0: Float = 0
+        var _pad1: Float = 0
+        var _pad2: Float = 0
+    }
+
     public let device: MTLDevice
     private let commandQueue: MTLCommandQueue
     private let solidPipeline: MTLRenderPipelineState
     private let grayPipeline: MTLRenderPipelineState
     private let colorPipeline: MTLRenderPipelineState
+    private let pillPipeline: MTLRenderPipelineState
     private let atlas: GlyphAtlas
 
     /// Blocks on RendererCore's warm-up if it hasn't finished — call
@@ -38,6 +50,7 @@ public final class DocumentRenderer {
     public init(scale: CGFloat) throws {
         precondition(MemoryLayout<GlyphQuad>.stride == 48, "GlyphQuad layout diverged from MSL")
         precondition(MemoryLayout<SolidQuad>.stride == 32, "SolidQuad layout diverged from MSL")
+        precondition(MemoryLayout<PillQuad>.stride == 48, "PillQuad layout diverged from MSL")
         let core = try RendererCore.shared.pipelines()
         self.device = core.device
         self.commandQueue = core.device.makeCommandQueue()!
@@ -45,6 +58,7 @@ public final class DocumentRenderer {
         self.solidPipeline = core.solid
         self.grayPipeline = core.gray
         self.colorPipeline = core.color
+        self.pillPipeline = core.pill
     }
 
     /// Call on backingScaleFactor change; drops every rasterized glyph.
@@ -55,16 +69,31 @@ public final class DocumentRenderer {
 
     // MARK: - Encoding
 
+    /// A rounded-rect drawn topmost in VIEW space (the overlay scrollbar).
+    public struct OverlayPill {
+        public var rectPts: CGRect
+        public var cornerRadiusPts: CGFloat
+        public var color: SIMD4<Float>
+
+        public init(rectPts: CGRect, cornerRadiusPts: CGFloat, color: SIMD4<Float>) {
+            self.rectPts = rectPts
+            self.cornerRadiusPts = cornerRadiusPts
+            self.color = color
+        }
+    }
+
     /// Draw `layout` into `target`. `originPts` is the content-column origin in
     /// view space (centering inset minus scroll offset), points.
     /// `selectionRects` are content-column-relative document rects painted
-    /// below glyphs (above block backgrounds).
+    /// below glyphs (above block backgrounds). `overlayPills` are view-space
+    /// rounded rects painted above everything.
     public func encode(
         layout: DocumentLayout,
         theme: Theme,
         originPts: CGPoint,
         scale: CGFloat,
         selectionRects: [CGRect] = [],
+        overlayPills: [OverlayPill] = [],
         target: MTLTexture,
         commandBuffer: MTLCommandBuffer
     ) {
@@ -209,7 +238,31 @@ public final class DocumentRenderer {
             drawGlyphs(quads, texture: atlas.colorPages[pageIndex].texture, encoder: encoder)
         }
         drawSolids(solidsAbove, encoder: encoder)
+        if !overlayPills.isEmpty {
+            let pills = overlayPills.map { pill in
+                PillQuad(
+                    origin: SIMD2(Float(pill.rectPts.minX * scale), Float(pill.rectPts.minY * scale)),
+                    size: SIMD2(Float(pill.rectPts.width * scale), Float(pill.rectPts.height * scale)),
+                    color: pill.color,
+                    radius: Float(pill.cornerRadiusPts * scale)
+                )
+            }
+            drawPills(pills, encoder: encoder)
+        }
         encoder.endEncoding()
+    }
+
+    private func drawPills(_ pills: [PillQuad], encoder: MTLRenderCommandEncoder) {
+        guard !pills.isEmpty,
+              let buffer = device.makeBuffer(
+                  bytes: pills,
+                  length: pills.count * MemoryLayout<PillQuad>.stride,
+                  options: .storageModeShared
+              )
+        else { return }
+        encoder.setRenderPipelineState(pillPipeline)
+        encoder.setVertexBuffer(buffer, offset: 0, index: 0)
+        encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4, instanceCount: pills.count)
     }
 
     private func appendRun(
@@ -294,7 +347,8 @@ public final class DocumentRenderer {
     /// Synchronous offscreen render — snapshot tests and frame dumps.
     public func renderOffscreen(
         layout: DocumentLayout, theme: Theme, originPts: CGPoint,
-        scale: CGFloat, width: Int, height: Int
+        scale: CGFloat, selectionRects: [CGRect] = [], overlayPills: [OverlayPill] = [],
+        width: Int, height: Int
     ) -> MTLTexture {
         let descriptor = MTLTextureDescriptor.texture2DDescriptor(
             pixelFormat: .bgra8Unorm, width: width, height: height, mipmapped: false
@@ -305,6 +359,7 @@ public final class DocumentRenderer {
         let commandBuffer = commandQueue.makeCommandBuffer()!
         encode(
             layout: layout, theme: theme, originPts: originPts, scale: scale,
+            selectionRects: selectionRects, overlayPills: overlayPills,
             target: texture, commandBuffer: commandBuffer
         )
         commandBuffer.commit()

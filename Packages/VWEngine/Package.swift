@@ -31,7 +31,7 @@ let package = Package(
         ),
         .testTarget(
             name: "VWEngineTests",
-            dependencies: ["VWCore", "VWParse", "VWStyle", "VWText", "VWLayout", "VWRender", "VWInteraction"],
+            dependencies: ["VWCore", "VWParse", "VWStyle", "VWText", "VWLayout", "VWRender", "VWInteraction", "VWViewer"],
             resources: [.copy("Goldens")]
         ),
     ],

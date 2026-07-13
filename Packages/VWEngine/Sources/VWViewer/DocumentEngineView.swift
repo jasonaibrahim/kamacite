@@ -53,6 +53,14 @@ public final class DocumentEngineView: NSView {
     public var onOpenLink: ((URL) -> Void)?
     private var mouseDownViewPoint: CGPoint?
 
+    // Overlay scrollbar.
+    private var scrollbarAlpha: CGFloat = 0
+    private var scrollbarHovered = false
+    /// Grab offset within the knob while dragging it; nil otherwise.
+    private var scrollbarGrabOffset: CGFloat?
+    private var lastScrollbarActivity: CFTimeInterval = 0
+    private var lastTickTime: CFTimeInterval = 0
+
     private var metalLayer: CAMetalLayer { layer as! CAMetalLayer }
 
     public init(data: Data, theme: Theme) {
@@ -152,9 +160,16 @@ public final class DocumentEngineView: NSView {
         }
 
         let frame = buildFrame()
+        // Flash the scrollbar on first appearance (system behavior) — it
+        // fades out via the display link after the window is up.
+        if maxScrollPts > 0 {
+            scrollbarAlpha = 1
+            lastScrollbarActivity = CACurrentMediaTime()
+        }
         renderer.encode(
             layout: frame.layout, theme: session.theme, originPts: contentOriginPts,
             scale: scale, selectionRects: frame.selectionRects,
+            overlayPills: scrollbarPills(),
             target: drawable.texture, commandBuffer: commandBuffer
         )
         mark("encode")
@@ -169,6 +184,8 @@ public final class DocumentEngineView: NSView {
         commandBuffer.waitUntilScheduled()
         drawable.present()
         firstFramePresented = true
+        // Run the display link so the first-appearance scrollbar flash fades.
+        displayLink?.isPaused = false
 
         dumpFrameIfRequested(renderer: renderer, frame: frame, scale: scale)
         scheduleScrollBenchIfRequested()
@@ -249,8 +266,79 @@ public final class DocumentEngineView: NSView {
         displayLink?.isPaused = false
     }
 
+    // MARK: - Overlay scrollbar
+
+    private var scrollbarDragging: Bool { scrollbarGrabOffset != nil }
+
+    private var scrollbarGeometry: ScrollbarGeometry? {
+        guard let layout = session.layout else { return nil }
+        return ScrollbarGeometry(
+            viewSize: bounds.size,
+            contentHeight: layout.contentHeightPts + Self.verticalInsetPts * 2,
+            scrollOffset: scrollOffsetPts,
+            maxScroll: maxScrollPts,
+            expanded: scrollbarHovered || scrollbarDragging
+        )
+    }
+
+    private func showScrollbar() {
+        guard maxScrollPts > 0 else { return }
+        lastScrollbarActivity = CACurrentMediaTime()
+        if scrollbarAlpha < 1 {
+            displayLink?.isPaused = false
+            idleTicks = 0
+        }
+    }
+
+    private func scrollbarPills() -> [DocumentRenderer.OverlayPill] {
+        guard scrollbarAlpha > 0.01, let geometry = scrollbarGeometry else { return [] }
+        let isDark = session.theme.isDark
+        var pills: [DocumentRenderer.OverlayPill] = []
+        if scrollbarHovered || scrollbarDragging {
+            // Expanded state gets the translucent track band.
+            let band: CGFloat = 15
+            pills.append(DocumentRenderer.OverlayPill(
+                rectPts: CGRect(x: bounds.width - band, y: 0, width: band, height: bounds.height),
+                cornerRadiusPts: 0,
+                color: isDark
+                    ? SIMD4(1, 1, 1, Float(0.08 * scrollbarAlpha))
+                    : SIMD4(0, 0, 0, Float(0.06 * scrollbarAlpha))
+            ))
+        }
+        let knobAlpha = (scrollbarHovered || scrollbarDragging ? 0.50 : 0.38) * scrollbarAlpha
+        pills.append(DocumentRenderer.OverlayPill(
+            rectPts: geometry.knobRect,
+            cornerRadiusPts: geometry.knobRect.width / 2,
+            color: isDark
+                ? SIMD4(1, 1, 1, Float(knobAlpha))
+                : SIMD4(0, 0, 0, Float(knobAlpha))
+        ))
+        return pills
+    }
+
+    /// Advance the fade animation; returns true while animating.
+    private func stepScrollbarFade(now: CFTimeInterval, dt: CFTimeInterval) -> Bool {
+        let active = scrollbarDragging || scrollbarHovered
+            || now - lastScrollbarActivity < 1.0
+        let target: CGFloat = active ? 1 : 0
+        guard scrollbarAlpha != target else { return false }
+        let step = CGFloat(dt / 0.20)
+        scrollbarAlpha = scrollbarAlpha < target
+            ? min(target, scrollbarAlpha + step)
+            : max(target, scrollbarAlpha - step)
+        frameDirty = true
+        return scrollbarAlpha != target
+    }
+
     @objc private func displayTick() {
         var animating = false
+        let now = CACurrentMediaTime()
+        let dt = lastTickTime > 0 ? min(now - lastTickTime, 1.0 / 30) : 1.0 / 120
+        lastTickTime = now
+
+        if stepScrollbarFade(now: now, dt: dt) {
+            animating = true
+        }
 
         if let snapBack {
             let t = min(1, (CACurrentMediaTime() - snapBack.startedAt) / Self.snapBackDuration)
@@ -301,6 +389,7 @@ public final class DocumentEngineView: NSView {
         renderer.encode(
             layout: frame.layout, theme: session.theme, originPts: contentOriginPts,
             scale: scale, selectionRects: frame.selectionRects,
+            overlayPills: scrollbarPills(),
             target: drawable.texture, commandBuffer: commandBuffer
         )
         commandBuffer.present(drawable)
@@ -323,6 +412,7 @@ public final class DocumentEngineView: NSView {
         layout.prepare(docRange: expand(visibleDocRange, by: bounds.height), anchorY: docTop)
         let newTop = layout.yOffset(of: anchorIndex) + max(0, withinBlock)
         scrollOffsetPts = min(max(0, newTop + Self.verticalInsetPts), maxScrollPts)
+        showScrollbar()
         render()
     }
 
@@ -402,6 +492,7 @@ public final class DocumentEngineView: NSView {
             scrollOffsetPts = min(max(0, scrollOffsetPts - delta), maxScrollPts)
         }
 
+        showScrollbar()
         setNeedsRender()
     }
 
@@ -424,6 +515,25 @@ public final class DocumentEngineView: NSView {
         guard session.layout != nil else { return }
         window?.makeFirstResponder(self)
         let viewPoint = convert(event.locationInWindow, from: nil)
+
+        // Scrollbar first: a visible knob/track owns clicks in its zone.
+        if scrollbarAlpha > 0.05, let geometry = scrollbarGeometry,
+           viewPoint.x >= geometry.trackRect.minX {
+            let slop = geometry.knobRect.insetBy(dx: -4, dy: -2)
+            if slop.contains(viewPoint) {
+                scrollbarGrabOffset = viewPoint.y - geometry.knobRect.minY
+            } else {
+                // Jump-to-spot, then keep dragging from the knob's center.
+                scrollOffsetPts = geometry.scrollOffsetCenteringKnob(
+                    atY: viewPoint.y, maxScroll: maxScrollPts
+                )
+                scrollbarGrabOffset = geometry.knobRect.height / 2
+            }
+            showScrollbar()
+            setNeedsRender()
+            return
+        }
+
         mouseDownViewPoint = viewPoint
         let position = textPosition(atViewPoint: viewPoint)
 
@@ -441,8 +551,17 @@ public final class DocumentEngineView: NSView {
     }
 
     public override func mouseDragged(with event: NSEvent) {
-        guard dragging else { return }
         let viewPoint = convert(event.locationInWindow, from: nil)
+
+        if let grabOffset = scrollbarGrabOffset, let geometry = scrollbarGeometry {
+            let knobY = viewPoint.y - grabOffset - ScrollbarGeometry.endInset
+            scrollOffsetPts = min(max(0, knobY * geometry.scrollPerKnobPoint), maxScrollPts)
+            showScrollbar()
+            setNeedsRender()
+            return
+        }
+
+        guard dragging else { return }
         lastDragViewPoint = viewPoint
 
         // Drag past an edge autoscrolls proportionally, driven by the display link.
@@ -459,6 +578,12 @@ public final class DocumentEngineView: NSView {
     }
 
     public override func mouseUp(with event: NSEvent) {
+        if scrollbarDragging {
+            scrollbarGrabOffset = nil
+            showScrollbar()
+            setNeedsRender()
+            return
+        }
         dragging = false
         autoscrollVelocityPts = 0
 
@@ -482,17 +607,36 @@ public final class DocumentEngineView: NSView {
         trackingAreas.forEach(removeTrackingArea)
         addTrackingArea(NSTrackingArea(
             rect: .zero,
-            options: [.mouseMoved, .activeInKeyWindow, .inVisibleRect],
+            options: [.mouseMoved, .mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
             owner: self
         ))
     }
 
     public override func mouseMoved(with event: NSEvent) {
         let viewPoint = convert(event.locationInWindow, from: nil)
-        if linkDestination(atViewPoint: viewPoint) != nil {
+
+        let inScrollbarZone = maxScrollPts > 0
+            && viewPoint.x >= bounds.width - ScrollbarGeometry.hotZoneWidth
+        if inScrollbarZone != scrollbarHovered {
+            scrollbarHovered = inScrollbarZone
+            if inScrollbarZone { showScrollbar() }
+            setNeedsRender()
+        }
+
+        if inScrollbarZone {
+            NSCursor.arrow.set()
+        } else if linkDestination(atViewPoint: viewPoint) != nil {
             NSCursor.pointingHand.set()
         } else {
             NSCursor.iBeam.set()
+        }
+    }
+
+    public override func mouseExited(with event: NSEvent) {
+        if scrollbarHovered {
+            scrollbarHovered = false
+            showScrollbar() // restart the fade clock
+            setNeedsRender()
         }
     }
 
@@ -607,6 +751,7 @@ public final class DocumentEngineView: NSView {
         guard let path = ProcessInfo.processInfo.environment["VW_DUMP_FRAME"], !path.isEmpty else { return }
         let texture = renderer.renderOffscreen(
             layout: frame.layout, theme: session.theme, originPts: contentOriginPts, scale: scale,
+            selectionRects: frame.selectionRects, overlayPills: scrollbarPills(),
             width: Int(bounds.width * scale), height: Int(bounds.height * scale)
         )
         let bytes = DocumentRenderer.bgraBytes(from: texture)
@@ -622,6 +767,7 @@ public final class DocumentEngineView: NSView {
                 let texture = renderer.renderOffscreen(
                     layout: frame.layout, theme: self.session.theme,
                     originPts: self.contentOriginPts, scale: scale,
+                    selectionRects: frame.selectionRects, overlayPills: self.scrollbarPills(),
                     width: Int(self.bounds.width * scale), height: Int(self.bounds.height * scale)
                 )
                 let bytes = DocumentRenderer.bgraBytes(from: texture)
@@ -650,13 +796,16 @@ public final class DocumentEngineView: NSView {
         var times: [Double] = []
         times.reserveCapacity(frames)
 
+        // Scrolling always shows the scrollbar — the bench includes its cost.
+        scrollbarAlpha = 1
         for i in 0..<frames {
             scrollOffsetPts = min(max(0, scrollOffsetPts + (i < frames / 2 ? step : -step)), maxScrollPts)
             let start = CACurrentMediaTime()
             let frame = buildFrame()
             let texture = renderer.renderOffscreen(
                 layout: frame.layout, theme: session.theme, originPts: contentOriginPts,
-                scale: scale, width: Int(bounds.width * scale), height: Int(bounds.height * scale)
+                scale: scale, selectionRects: frame.selectionRects, overlayPills: scrollbarPills(),
+                width: Int(bounds.width * scale), height: Int(bounds.height * scale)
             )
             _ = texture
             times.append((CACurrentMediaTime() - start) * 1000)
