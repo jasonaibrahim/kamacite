@@ -1,4 +1,5 @@
 import Testing
+import VWCore
 import VWStyle
 
 @Suite struct HighlighterTests {
@@ -73,5 +74,28 @@ import VWStyle
     @Test func unknownLanguageReturnsNil() {
         #expect(highlightCode("whatever", language: "brainfuck") == nil)
         #expect(highlightCode("whatever", language: "") == nil)
+    }
+
+    @Test func tokenSpansAreByteExact() {
+        // Multibyte content on purpose: é (2 bytes) and 🚀 (4 bytes) before
+        // and inside tokens.
+        let code = "let café = \"🚀 go\" // é comment\nlet n = 42"
+        let base = 100
+        let runs = highlightCode(
+            code, language: "swift",
+            contentSpan: SourceSpan(startUTF8: base, endUTF8: base + code.utf8.count)
+        )!
+        var expected = base
+        for run in runs {
+            #expect(run.span?.startUTF8 == expected)
+            #expect(run.span?.endUTF8 == expected + run.text.utf8.count)
+            expected += run.text.utf8.count
+        }
+        #expect(expected == base + code.utf8.count)
+    }
+
+    @Test func withoutContentSpanTokensHaveNoSpans() {
+        let runs = highlightCode("let x = 1", language: "swift")!
+        #expect(runs.allSatisfy { $0.span == nil })
     }
 }

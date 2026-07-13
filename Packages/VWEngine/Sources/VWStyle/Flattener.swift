@@ -153,11 +153,19 @@ private struct Flattener {
         case .paragraph(let inlines):
             emit(block, kind: .paragraph, runs: runs(from: inlines, color: baseColor))
 
-        case .codeBlock(let language, let code):
+        case .codeBlock(let language, let code, let contentSpan):
             var text = code
-            if text.hasSuffix("\n") { text.removeLast() }
+            var span = contentSpan
+            if text.hasSuffix("\n") {
+                text.removeLast()
+                if let s = span {
+                    span = SourceSpan(startUTF8: s.startUTF8, endUTF8: max(s.startUTF8, s.endUTF8 - 1))
+                }
+            }
+            // span nil = content isn't a contiguous source slice; source copy
+            // then falls back to the whole fenced block, which is honest.
             emit(block, kind: .codeBlock, language: language, runs: [
-                StyledRun(text: text, traits: .mono, color: .codeText, span: block.span)
+                StyledRun(text: text, traits: .mono, color: .codeText, span: span)
             ])
 
         case .blockquote(let children):

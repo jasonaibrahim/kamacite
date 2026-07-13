@@ -14,16 +14,18 @@ public func parseMarkdown(data: Data) -> ContentTree {
 
 public func parseMarkdown(_ text: String) -> ContentTree {
     let document = Document(parsing: text)
-    var converter = Converter(lineTable: LineTable(text: text))
+    var converter = Converter(source: text, lineTable: LineTable(text: text))
     let blocks = document.children.compactMap { converter.block($0) }
     return ContentTree(blocks: blocks, sourceUTF8Count: converter.lineTable.utf8Count)
 }
 
 private struct Converter {
+    let source: String
     let lineTable: LineTable
     private var nextID: UInt64 = 0
 
-    init(lineTable: LineTable) {
+    init(source: String, lineTable: LineTable) {
+        self.source = source
         self.lineTable = lineTable
     }
 
@@ -56,7 +58,9 @@ private struct Converter {
             return ContentBlock(id: id, span: span, kind: .paragraph(inlines: inlines(of: paragraph)))
         case let code as CodeBlock:
             return ContentBlock(id: id, span: span, kind: .codeBlock(
-                language: code.language, code: code.code
+                language: code.language,
+                code: code.code,
+                contentSpan: codeContentSpan(code: code.code, range: code.range)
             ))
         case let quote as BlockQuote:
             return ContentBlock(id: id, span: span, kind: .blockquote(
@@ -84,6 +88,41 @@ private struct Converter {
                 inlines: [InlineNode(span: span, kind: .text(text))]
             ))
         }
+    }
+
+    /// Byte-verified span of a code block's CONTENT. Candidate offsets come
+    /// from the line table (content usually starts on the line after the
+    /// opening fence, at the fence's indent or column 1); a candidate only
+    /// wins if the source bytes there EQUAL the code string. Indented blocks
+    /// and quoted fences fail the comparison (their content is assembled from
+    /// prefixed lines, not a contiguous slice) and correctly return nil.
+    private func codeContentSpan(code: String, range: SourceRange?) -> SourceSpan? {
+        guard let range, !code.isEmpty else { return nil }
+        let codeBytes = Array(code.utf8)
+        let line = range.lowerBound.line
+        let column = range.lowerBound.column
+        var candidates = [
+            lineTable.utf8Offset(line: line + 1, column: column),
+            lineTable.utf8Offset(line: line + 1, column: 1),
+            lineTable.utf8Offset(line: line, column: column),
+        ]
+        candidates.removeAll { $0 < 0 }
+
+        return source.utf8.withContiguousStorageIfAvailable { buffer -> SourceSpan? in
+            var tried: Set<Int> = []
+            for start in candidates where tried.insert(start).inserted {
+                guard start + codeBytes.count <= buffer.count else { continue }
+                var matches = true
+                for i in 0..<codeBytes.count where buffer[start + i] != codeBytes[i] {
+                    matches = false
+                    break
+                }
+                if matches {
+                    return SourceSpan(startUTF8: start, endUTF8: start + codeBytes.count)
+                }
+            }
+            return nil
+        } ?? nil
     }
 
     private mutating func item(_ markup: Markup) -> VWParse.ListItem? {

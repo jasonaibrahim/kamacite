@@ -80,13 +80,59 @@ private func slice(_ source: String, _ span: SourceSpan) -> String {
     }
 
     @Test func codeBlockKeepsLanguageAndBody() {
-        let tree = parseMarkdown("```swift\nlet x = 1\n```")
-        guard case .codeBlock(let language, let code) = tree.blocks[0].kind else {
+        let source = "```swift\nlet x = 1\n```"
+        let tree = parseMarkdown(source)
+        guard case .codeBlock(let language, let code, let contentSpan) = tree.blocks[0].kind else {
             Issue.record("expected code block")
             return
         }
         #expect(language == "swift")
         #expect(code == "let x = 1\n")
+        // Content span is byte-verified: slicing the source by it MUST yield
+        // the code exactly.
+        #expect(contentSpan != nil)
+        if let contentSpan {
+            #expect(slice(source, contentSpan) == code)
+        }
+    }
+
+    @Test func fencedCodeContentSpanSurvivesPrecedingContent() {
+        let source = "# Héading with é\n\nsome *prose* first\n\n```python\nx = \"é\"\ny = 2\n```\n\ntail"
+        let tree = parseMarkdown(source)
+        guard let block = tree.blocks.first(where: {
+            if case .codeBlock = $0.kind { return true } else { return false }
+        }), case .codeBlock(_, let code, let contentSpan) = block.kind else {
+            Issue.record("expected code block")
+            return
+        }
+        #expect(contentSpan != nil)
+        if let contentSpan {
+            #expect(slice(source, contentSpan) == code)
+        }
+    }
+
+    @Test func quotedFenceHasNoContentSpan() {
+        // Inside a blockquote every line carries a "> " prefix — the content
+        // is NOT a contiguous source slice, and pretending otherwise would
+        // corrupt source copies.
+        let tree = parseMarkdown("> ```swift\n> let x = 1\n> let y = 2\n> ```")
+        guard case .blockquote(let children) = tree.blocks[0].kind,
+              case .codeBlock(_, _, let contentSpan) = children[0].kind else {
+            Issue.record("expected quoted code block")
+            return
+        }
+        #expect(contentSpan == nil)
+    }
+
+    @Test func indentedMultilineCodeHasNoContentSpan() {
+        let tree = parseMarkdown("para\n\n    line one\n    line two\n")
+        guard let block = tree.blocks.first(where: {
+            if case .codeBlock = $0.kind { return true } else { return false }
+        }), case .codeBlock(_, _, let contentSpan) = block.kind else {
+            Issue.record("expected indented code block")
+            return
+        }
+        #expect(contentSpan == nil)
     }
 
     @Test func taskListCheckboxes() {

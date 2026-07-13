@@ -25,7 +25,11 @@ public struct ContentBlock: Sendable, Equatable {
         case heading(level: Int, inlines: [InlineNode])
         case paragraph(inlines: [InlineNode])
         /// `code` keeps cmark's trailing newline; consumers trim for display.
-        case codeBlock(language: String?, code: String)
+        /// `contentSpan` is the code CONTENT's byte range in the source —
+        /// byte-verified against the source, so it's exact when present and
+        /// nil when the content isn't a contiguous slice (indented blocks,
+        /// fences inside blockquotes). The block's own span includes fences.
+        case codeBlock(language: String?, code: String, contentSpan: SourceSpan?)
         case blockquote(children: [ContentBlock])
         case list(ordered: Bool, start: Int, items: [ListItem])
         case table(alignments: [TableAlignment], head: [[InlineNode]], body: [[[InlineNode]]])

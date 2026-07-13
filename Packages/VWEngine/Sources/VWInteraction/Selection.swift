@@ -237,9 +237,13 @@ public func selectedPlainText(
 }
 
 /// Byte range into the ORIGINAL markdown source covering the selection — the
-/// SourceSpans earning their keep. Whole-block selections take the block's
-/// span (markdown syntax included); partial selections map through run spans,
-/// byte-exact via UTF-8 prefix length.
+/// SourceSpans earning their keep.
+///
+/// Semantics: an endpoint takes the block's syntax-INCLUSIVE span (fences,
+/// `#` prefixes, `**`) only when the selection covers that whole block;
+/// partial selections map through run spans, byte-exact via UTF-8 prefix
+/// length — so selecting three characters inside a highlighted code block
+/// copies exactly those three characters of source.
 public func selectedSourceByteRange(
     selection: DocumentSelection, document: FlatDocument
 ) -> SourceSpan? {
@@ -248,18 +252,30 @@ public func selectedSourceByteRange(
     guard !selection.isEmpty, start.blockIndex < document.blocks.count else { return nil }
 
     let startBlock = document.blocks[start.blockIndex]
-    let endBlock = document.blocks[min(end.blockIndex, document.blocks.count - 1)]
+    let endBlockIndex = min(end.blockIndex, document.blocks.count - 1)
+    let endBlock = document.blocks[endBlockIndex]
+    let spansBlocks = endBlockIndex > start.blockIndex
 
-    let startByte = start.utf16Offset == 0
+    let startBlockLength = utf16Length(of: startBlock)
+    let endBlockLength = utf16Length(of: endBlock)
+    let startCoversBlock = start.utf16Offset == 0
+        && (spansBlocks || end.utf16Offset >= startBlockLength)
+    let endCoversBlock = end.utf16Offset >= endBlockLength
+        && (spansBlocks || start.utf16Offset == 0)
+
+    let startByte = startCoversBlock
         ? startBlock.span.startUTF8
         : byteOffset(in: startBlock, atUTF16: start.utf16Offset) ?? startBlock.span.startUTF8
-    let endText = endBlock.runs.map(\.text).joined() as NSString
-    let endByte = end.utf16Offset >= endText.length
+    let endByte = endCoversBlock
         ? endBlock.span.endUTF8
         : byteOffset(in: endBlock, atUTF16: end.utf16Offset) ?? endBlock.span.endUTF8
 
     guard endByte > startByte else { return nil }
     return SourceSpan(startUTF8: startByte, endUTF8: endByte)
+}
+
+private func utf16Length(of block: FlatBlock) -> Int {
+    block.runs.reduce(0) { $0 + ($1.text as NSString).length }
 }
 
 /// Map a UTF-16 offset in a block's rendered text to a source byte offset:

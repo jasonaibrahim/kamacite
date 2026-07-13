@@ -8,6 +8,11 @@ import VWParse
 import VWStyle
 @testable import VWInteraction
 
+private func sliceBytes(_ source: String, _ span: SourceSpan) -> String {
+    let bytes = Array(source.utf8)
+    return String(decoding: bytes[span.startUTF8..<min(span.endUTF8, bytes.count)], as: UTF8.self)
+}
+
 @Suite struct SelectionTests {
     private let theme = Theme.light
 
@@ -113,6 +118,81 @@ import VWStyle
         if let partialSpan {
             let sliced = String(decoding: bytes[partialSpan.startUTF8..<partialSpan.endUTF8], as: UTF8.self)
             #expect(sliced == "old")
+        }
+    }
+
+    @Test @MainActor func partialSourceCopyInsidePlainCodeBlock() {
+        let source = "intro paragraph\n\n```\nlet answer = compute(42)\nreturn answer\n```"
+        let (_, flat) = layoutFor(source)
+        let codeIndex = flat.blocks.firstIndex { $0.kind == .codeBlock }!
+        let codeText = flat.blocks[codeIndex].runs.map(\.text).joined() as NSString
+
+        // Select "compute(42)" inside the block.
+        let target = codeText.range(of: "compute(42)")
+        let selection = DocumentSelection(
+            anchor: TextPosition(blockIndex: codeIndex, utf16Offset: target.location),
+            focus: TextPosition(blockIndex: codeIndex, utf16Offset: target.location + target.length)
+        )
+        let span = selectedSourceByteRange(selection: selection, document: flat)
+        #expect(span != nil)
+        if let span {
+            #expect(sliceBytes(source, span) == "compute(42)")
+        }
+
+        // Selecting from content offset 0 partially: still content, no fence.
+        let head = DocumentSelection(
+            anchor: TextPosition(blockIndex: codeIndex, utf16Offset: 0),
+            focus: TextPosition(blockIndex: codeIndex, utf16Offset: 3)
+        )
+        if let headSpan = selectedSourceByteRange(selection: head, document: flat) {
+            #expect(sliceBytes(source, headSpan) == "let")
+        } else {
+            Issue.record("no span for head selection")
+        }
+
+        // The FULL block still copies with fences included.
+        let full = DocumentSelection(
+            anchor: TextPosition(blockIndex: codeIndex, utf16Offset: 0),
+            focus: TextPosition(blockIndex: codeIndex, utf16Offset: codeText.length)
+        )
+        if let fullSpan = selectedSourceByteRange(selection: full, document: flat) {
+            #expect(sliceBytes(source, fullSpan).hasPrefix("```"))
+            #expect(sliceBytes(source, fullSpan).hasSuffix("```"))
+        }
+    }
+
+    @Test @MainActor func partialSourceCopyInsideHighlightedCodeBlock() {
+        let source = "# Título é\n\n```swift\nlet café = greet(\"🚀\")\nreturn café\n```"
+        var flat = flatten(parseMarkdown(source))
+        let codeIndex = flat.blocks.firstIndex { $0.kind == .codeBlock }!
+
+        // Apply highlighting exactly as the session does (content span rides in).
+        let plain = flat.blocks[codeIndex].runs[0]
+        let highlighted = highlightCode(plain.text, language: "swift", contentSpan: plain.span)!
+        flat.blocks[codeIndex].runs = highlighted
+
+        let codeText = flat.blocks[codeIndex].runs.map(\.text).joined() as NSString
+        let target = codeText.range(of: "greet(\"🚀\")")
+        let selection = DocumentSelection(
+            anchor: TextPosition(blockIndex: codeIndex, utf16Offset: target.location),
+            focus: TextPosition(blockIndex: codeIndex, utf16Offset: target.location + target.length)
+        )
+        let span = selectedSourceByteRange(selection: selection, document: flat)
+        #expect(span != nil)
+        if let span {
+            #expect(sliceBytes(source, span) == "greet(\"🚀\")")
+        }
+
+        // A selection crossing token boundaries mid-token stays exact too.
+        let mid = codeText.range(of: "afé = gre")
+        let crossing = DocumentSelection(
+            anchor: TextPosition(blockIndex: codeIndex, utf16Offset: mid.location),
+            focus: TextPosition(blockIndex: codeIndex, utf16Offset: mid.location + mid.length)
+        )
+        if let crossingSpan = selectedSourceByteRange(selection: crossing, document: flat) {
+            #expect(sliceBytes(source, crossingSpan) == "afé = gre")
+        } else {
+            Issue.record("no span for crossing selection")
         }
     }
 }

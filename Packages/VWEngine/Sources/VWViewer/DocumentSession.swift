@@ -61,14 +61,18 @@ public final class DocumentSession {
                   document.blocks.indices.contains(index) else { continue }
             let block = document.blocks[index]
             guard let language = block.codeLanguage, !language.isEmpty,
-                  let code = block.runs.first?.text, block.runs.count == 1
+                  let plainRun = block.runs.first, block.runs.count == 1
             else {
                 highlightRequested.insert(index)
                 continue
             }
             highlightRequested.insert(index)
+            let code = plainRun.text
+            // The plain run's span is the byte-verified content span; tokens
+            // inherit exact sub-spans so partial source copy stays byte-exact.
+            let contentSpan = plainRun.span
             Task.detached(priority: .utility) { [weak self] in
-                guard let runs = highlightCode(code, language: language) else { return }
+                guard let runs = highlightCode(code, language: language, contentSpan: contentSpan) else { return }
                 await self?.applyHighlight(index: index, runs: runs)
             }
         }

@@ -1,4 +1,5 @@
 import Foundation
+import VWCore
 
 // Table-driven syntax highlighter: strings, comments, numbers, keywords.
 // Deliberately not a parser — it's a colorist for fenced code in a markdown
@@ -9,7 +10,13 @@ import Foundation
 
 /// nil when the language isn't recognized (block stays plain).
 /// Invariant: the concatenated run texts equal `code` exactly.
-public func highlightCode(_ code: String, language: String) -> [StyledRun]? {
+///
+/// When `contentSpan` (the code's byte-verified source range) is provided,
+/// each token gets an exact SourceSpan by UTF-8 accumulation — partial
+/// selections in highlighted code stay byte-exact for source copy.
+public func highlightCode(
+    _ code: String, language: String, contentSpan: SourceSpan? = nil
+) -> [StyledRun]? {
     guard let spec = LanguageSpec.spec(for: language) else { return nil }
 
     let scalars = Array(code.unicodeScalars)
@@ -118,13 +125,16 @@ public func highlightCode(_ code: String, language: String) -> [StyledRun]? {
         i += 1
     }
 
+    var byteOffset = contentSpan?.startUTF8
     return tokens.map { token in
-        StyledRun(
-            text: String(String.UnicodeScalarView(scalars[token.start..<token.end])),
-            traits: .mono,
-            color: token.kind,
-            span: nil
-        )
+        let text = String(String.UnicodeScalarView(scalars[token.start..<token.end]))
+        var span: SourceSpan?
+        if let start = byteOffset {
+            let end = start + text.utf8.count
+            span = SourceSpan(startUTF8: start, endUTF8: end)
+            byteOffset = end
+        }
+        return StyledRun(text: text, traits: .mono, color: token.kind, span: span)
     }
 }
 
