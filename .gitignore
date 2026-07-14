@@ -4,6 +4,7 @@ App/Info.plist
 
 # Build products
 build/
+dist/
 DerivedData/
 .build/
 .swiftpm/
