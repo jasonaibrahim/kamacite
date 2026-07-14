@@ -29,6 +29,8 @@ targets:
     platform: macOS
     sources:
       - App/Sources
+      - path: App/Resources/Kamacite.icns
+        buildPhase: resources
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.xylophonexyz.kamacite
@@ -44,7 +46,8 @@ targets:
       properties:
         CFBundleName: Kamacite
         CFBundleDisplayName: Kamacite
-        CFBundleShortVersionString: "0.1.0"
+        CFBundleIconFile: Kamacite
+        CFBundleShortVersionString: "1.0.0-beta.1"
         CFBundleVersion: "1"
         LSMinimumSystemVersion: "15.0"
         LSApplicationCategoryType: public.app-category.productivity
