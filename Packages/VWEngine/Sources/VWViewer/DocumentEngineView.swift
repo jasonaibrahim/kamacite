@@ -53,6 +53,24 @@ public final class DocumentEngineView: NSView {
     public var onOpenLink: ((URL) -> Void)?
     private var mouseDownViewPoint: CGPoint?
 
+    // Diagrams.
+    /// App-injected mermaid rasterizer (the onOpenLink precedent — the App's
+    /// only way in); nil leaves mermaid fences as plain code blocks.
+    public var diagramRenderer: DiagramRendering? {
+        get { session.diagramRenderer }
+        set { session.diagramRenderer = newValue }
+    }
+    /// Last backing scale diagram rasters were requested at. A display change
+    /// (window dragged between DPIs) re-rasters text via the glyph-atlas flush
+    /// but leaves diagram bitmaps untouched — they must be explicitly
+    /// invalidated or they stay wrong-resolution forever. fontScale changes
+    /// invalidate through setTheme, so only the backing scale is tracked here.
+    private var lastDiagramBackingScale: CGFloat = 0
+    /// Rasters for placed diagrams by imageKey, passed to every encode. Owned
+    /// here, not by the session: textures belong to the renderer's MTLDevice.
+    private var diagramTextures: [UInt64: MTLTexture] = [:]
+    private static let diagramTextureBudgetBytes = 64 << 20
+
     // Font zoom (⌘+/⌘−/⌘0), persisted across launches.
     private static let fontScaleDefaultsKey = "kamacite.fontScale"
     private var fontScale: CGFloat = {
@@ -81,6 +99,12 @@ public final class DocumentEngineView: NSView {
         session.onContentSplice = { [weak self] in
             self?.handleContentSplice()
         }
+        session.onDiagramReady = { [weak self] index, image in
+            self?.handleDiagramReady(index: index, image: image)
+        }
+        session.onDiagramFailed = { [weak self] index in
+            self?.handleDiagramResize(index: index)
+        }
     }
 
     /// The background full parse replaced the first-paint slice. Block indices
@@ -97,8 +121,130 @@ public final class DocumentEngineView: NSView {
             scrollOffsetPts += adjustment
         }
         scrollOffsetPts = min(max(0, scrollOffsetPts), maxScrollPts)
+        // The freshly flattened document has no .diagram blocks yet — every
+        // raster is unreferenced and drops; visibility re-requests.
+        pruneDiagramTexturesToReferenced()
         showScrollbar() // content height jumped; flash the new proportions
         setNeedsRender()
+    }
+
+    // MARK: - Diagrams (async raster → anchored swap)
+
+    /// A diagram raster landed (the session already swapped its document copy
+    /// to `.diagram`): upload the texture, then re-measure the block through
+    /// the layout with the handleContentSplice anchoring contract — the
+    /// height change must not move what's on glass.
+    private func handleDiagramReady(index: Int, image: DiagramImage) {
+        guard let document = session.document,
+              document.blocks.indices.contains(index),
+              let key = document.blocks[index].diagram?.imageKey,
+              let texture = makeDiagramTexture(from: image.image)
+        else { return }
+        diagramTextures[key] = texture
+        handleDiagramResize(index: index)
+    }
+
+    /// A block's on-glass form changed out-of-band — a raster landed, or a
+    /// pending skeleton fell back to a code block. Re-measure through the
+    /// anchored replaceBlock so the height change never moves visible content.
+    private func handleDiagramResize(index: Int) {
+        guard let layout = session.layout, let document = session.document,
+              document.blocks.indices.contains(index) else { return }
+        let adjustment = layout.replaceBlock(
+            at: index, with: document.blocks[index],
+            anchorY: max(0, visibleDocRange.lowerBound)
+        )
+        if adjustment != 0 {
+            scrollOffsetPts += adjustment
+        }
+        // Landings arrive at arbitrary times; while a rubber-band gesture owns
+        // the offset, leave the overshoot alone (snap-back converges it).
+        if !gestureActive, !momentumActive, snapBack == nil {
+            scrollOffsetPts = min(max(0, scrollOffsetPts), maxScrollPts)
+        }
+        // Prune AFTER the swap landed (a theme/scale refresh just orphaned the
+        // block's previous imageKey) and only then enforce the byte cap, so
+        // the block is placed as .diagram and its fresh raster counts as
+        // visible rather than as an eviction candidate.
+        pruneDiagramTexturesToReferenced()
+        enforceDiagramTextureBudget()
+        showScrollbar() // content height changed; flash the new proportions
+        setNeedsRender() // display link is pause-on-idle; wake it or nothing paints
+    }
+
+    /// GlyphAtlas's raster recipe: draw into a premultiplied BGRA sRGB bitmap,
+    /// replace into a shared .bgra8Unorm texture on the RENDERER's device
+    /// (Metal resources are not portable across MTLDevice instances). A few
+    /// ms once per diagram, never on the per-frame path.
+    private func makeDiagramTexture(from image: CGImage) -> MTLTexture? {
+        guard let device = ensureRenderer()?.device else { return nil }
+        let width = image.width, height = image.height
+        guard width > 0, height > 0 else { return nil }
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        let drew = pixels.withUnsafeMutableBytes { raw -> Bool in
+            guard let context = CGContext(
+                data: raw.baseAddress, width: width, height: height,
+                bitsPerComponent: 8, bytesPerRow: width * 4,
+                space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                bitmapInfo: CGBitmapInfo.byteOrder32Little.rawValue
+                    | CGImageAlphaInfo.premultipliedFirst.rawValue
+            ) else { return false }
+            context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+            return true
+        }
+        guard drew else { return nil }
+        let descriptor = MTLTextureDescriptor.texture2DDescriptor(
+            pixelFormat: .bgra8Unorm, width: width, height: height, mipmapped: false
+        )
+        descriptor.usage = .shaderRead
+        descriptor.storageMode = .shared
+        guard let texture = device.makeTexture(descriptor: descriptor) else { return nil }
+        pixels.withUnsafeBytes { raw in
+            texture.replace(
+                region: MTLRegionMake2D(0, 0, width, height), mipmapLevel: 0,
+                withBytes: raw.baseAddress!, bytesPerRow: width * 4
+            )
+        }
+        return texture
+    }
+
+    /// Drop rasters no document block references — splice and zoom leave
+    /// replaced imageKeys behind. O(blocks), so called only on those events,
+    /// never per frame; always at a frame boundary (never mid-encode).
+    private func pruneDiagramTexturesToReferenced() {
+        guard !diagramTextures.isEmpty else { return }
+        guard let document = session.document else {
+            diagramTextures.removeAll()
+            return
+        }
+        var referenced: Set<UInt64> = []
+        for block in document.blocks {
+            if let info = block.diagram {
+                referenced.insert(info.imageKey)
+            }
+        }
+        diagramTextures = diagramTextures.filter { referenced.contains($0.key) }
+    }
+
+    /// Byte cap on resident rasters, enforced after each upload (a frame
+    /// boundary): over budget, drop not-visible entries in deterministic key
+    /// order. A visible `.diagram` block whose raster was dropped draws an
+    /// empty box for a frame and re-requests through requestDiagrams.
+    private func enforceDiagramTextureBudget() {
+        func totalBytes() -> Int {
+            diagramTextures.values.reduce(0) { $0 + $1.width * $1.height * 4 }
+        }
+        guard totalBytes() > Self.diagramTextureBudgetBytes, let layout = session.layout else { return }
+        var visible: Set<UInt64> = []
+        for block in layout.placedBlocks(in: visibleDocRange) {
+            if let placed = block.diagram {
+                visible.insert(placed.imageKey)
+            }
+        }
+        for key in diagramTextures.keys.sorted() where !visible.contains(key) {
+            guard totalBytes() > Self.diagramTextureBudgetBytes else { break }
+            diagramTextures.removeValue(forKey: key)
+        }
     }
 
     @available(*, unavailable)
@@ -164,6 +310,7 @@ public final class DocumentEngineView: NSView {
         let scale = scale
         metalLayer.contentsScale = scale
         metalLayer.drawableSize = CGSize(width: bounds.width * scale, height: bounds.height * scale)
+        lastDiagramBackingScale = scale
 
         if fontScale != 1 {
             session.setTheme(resolvedTheme())
@@ -200,7 +347,7 @@ public final class DocumentEngineView: NSView {
         renderer.encode(
             layout: frame.layout, theme: session.theme, originPts: contentOriginPts,
             scale: scale, selectionRects: frame.selectionRects,
-            overlayPills: scrollbarPills(),
+            overlayPills: scrollbarPills(), diagramTextures: diagramTextures,
             target: drawable.texture, commandBuffer: commandBuffer
         )
         mark("encode")
@@ -310,6 +457,19 @@ public final class DocumentEngineView: NSView {
 
         layout.evict(keeping: expand(visible, by: bounds.height * 4))
         session.requestHighlights(for: blocks)
+        // Enqueue-only (buildFrame runs during first paint and at up to
+        // 120Hz). Placed diagrams whose raster fell out of the store get
+        // their request state reset so they re-render.
+        var missingTextureIndices: Set<Int> = []
+        for block in blocks {
+            if let placed = block.diagram, diagramTextures[placed.imageKey] == nil {
+                missingTextureIndices.insert(block.flatIndex)
+            }
+        }
+        session.requestDiagrams(
+            for: blocks, pixelScale: scale * fontScale, fontScale: fontScale,
+            missingTextureIndices: missingTextureIndices
+        )
 
         return Frame(
             layout: DocumentLayout(
@@ -462,7 +622,7 @@ public final class DocumentEngineView: NSView {
         renderer.encode(
             layout: frame.layout, theme: session.theme, originPts: contentOriginPts,
             scale: scale, selectionRects: frame.selectionRects,
-            overlayPills: scrollbarPills(),
+            overlayPills: scrollbarPills(), diagramTextures: diagramTextures,
             target: drawable.texture, commandBuffer: commandBuffer
         )
         if metalLayer.presentsWithTransaction {
@@ -494,6 +654,14 @@ public final class DocumentEngineView: NSView {
         metalLayer.contentsScale = scale
         metalLayer.drawableSize = CGSize(width: bounds.width * scale, height: bounds.height * scale)
         renderer?.scaleChanged(scale)
+        // scaleChanged flushed the glyph atlas; diagram rasters are equally
+        // wrong at the new backing scale. Visible blocks re-request through
+        // requestDiagrams (stale textures bridge the gap via linear sampling).
+        // Gated: resize ticks funnel through here with the scale unchanged.
+        if scale != lastDiagramBackingScale {
+            lastDiagramBackingScale = scale
+            session.invalidateDiagramRasters()
+        }
 
         // Anchor the top visible block across the reflow.
         let docTop = max(0, visibleDocRange.lowerBound)
@@ -565,6 +733,10 @@ public final class DocumentEngineView: NSView {
         UserDefaults.standard.set(Double(clamped), forKey: Self.fontScaleDefaultsKey)
         session.setTheme(resolvedTheme()) // metrics changed → layout torn down
         session.prepare(contentWidth: contentWidthPts, scale: scale)
+        // Swapped .diagram blocks persist (they re-estimate from DiagramInfo)
+        // and keep their old-zoom rasters on glass until re-renders land, but
+        // keys replaced by earlier re-renders are garbage now.
+        pruneDiagramTexturesToReferenced()
         guard let layout = session.layout else { return }
 
         let newTop = layout.yOffset(of: anchorIndex)
@@ -890,15 +1062,20 @@ public final class DocumentEngineView: NSView {
         let texture = renderer.renderOffscreen(
             layout: frame.layout, theme: session.theme, originPts: contentOriginPts, scale: scale,
             selectionRects: frame.selectionRects, overlayPills: scrollbarPills(),
+            diagramTextures: diagramTextures,
             width: Int(bounds.width * scale), height: Int(bounds.height * scale)
         )
         let bytes = DocumentRenderer.bgraBytes(from: texture)
         writeBGRAPNG(bytes, width: texture.width, height: texture.height, to: URL(fileURLWithPath: path))
 
         // VW_DUMP_SETTLED=1: a second dump after async work (syntax
-        // highlighting) lands, then exit. PerfReporter defers its bench exit.
+        // highlighting, diagram rasters) lands, then exit. PerfReporter defers
+        // its bench exit. VW_SETTLE_MS overrides the wait (default 1000 —
+        // identical to the pre-diagram behavior; webview renders need more).
         if ProcessInfo.processInfo.environment["VW_DUMP_SETTLED"] == "1" {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+            let settleMs = ProcessInfo.processInfo.environment["VW_SETTLE_MS"]
+                .flatMap(Double.init) ?? 1000
+            DispatchQueue.main.asyncAfter(deadline: .now() + settleMs / 1000) { [weak self] in
                 guard let self, let renderer = self.renderer else { exit(0) }
                 let scale = self.scale
                 let frame = self.buildFrame()
@@ -906,6 +1083,7 @@ public final class DocumentEngineView: NSView {
                     layout: frame.layout, theme: self.session.theme,
                     originPts: self.contentOriginPts, scale: scale,
                     selectionRects: frame.selectionRects, overlayPills: self.scrollbarPills(),
+                    diagramTextures: self.diagramTextures,
                     width: Int(self.bounds.width * scale), height: Int(self.bounds.height * scale)
                 )
                 let bytes = DocumentRenderer.bgraBytes(from: texture)
@@ -943,6 +1121,7 @@ public final class DocumentEngineView: NSView {
             let texture = renderer.renderOffscreen(
                 layout: frame.layout, theme: session.theme, originPts: contentOriginPts,
                 scale: scale, selectionRects: frame.selectionRects, overlayPills: scrollbarPills(),
+                diagramTextures: diagramTextures,
                 width: Int(bounds.width * scale), height: Int(bounds.height * scale)
             )
             _ = texture

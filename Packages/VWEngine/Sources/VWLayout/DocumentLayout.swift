@@ -20,6 +20,9 @@ public struct BlockLayout: Sendable {
     /// block-relative, in array order.
     public let backgrounds: [BackgroundQuad]
     public let shaped: ShapedBlockText
+    /// Raster to draw for `.diagram` blocks; the renderer resolves the
+    /// imageKey against its texture store (missing texture → nothing drawn).
+    public var diagram: PlacedDiagram? = nil
 
     public var maxYPts: CGFloat { yPts + heightPts }
 
@@ -47,6 +50,19 @@ public struct BackgroundQuad: Sendable {
     public init(rectPts: CGRect, color: ColorToken) {
         self.rectPts = rectPts
         self.color = color
+    }
+}
+
+/// A diagram placed by layout, consumed by the renderer.
+public struct PlacedDiagram: Sendable, Equatable {
+    public var imageKey: UInt64
+    /// Image rect in points, relative to the block's origin (same space as
+    /// BackgroundQuad.rectPts).
+    public var rectPts: CGRect
+
+    public init(imageKey: UInt64, rectPts: CGRect) {
+        self.imageKey = imageKey
+        self.rectPts = rectPts
     }
 }
 

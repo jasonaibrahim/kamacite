@@ -62,6 +62,9 @@ public struct FlatBlock: Sendable {
     public var codeLanguage: String?
     /// Structured cell data for `.tableRow` blocks.
     public var tableRow: TableRowInfo?
+    /// Raster identity for `.diagram` blocks, set by the session's swap —
+    /// never by the flattener.
+    public var diagram: DiagramInfo? = nil
     /// Mega-block fragments: true on every fragment after the first.
     public var isContinuation = false
     /// True on every fragment except the last (suppresses trailing spacing).
@@ -72,7 +75,7 @@ public struct FlatBlock: Sendable {
     public var baseFontClass: FontClass {
         switch kind {
         case .heading(let level): .heading(level)
-        case .codeBlock: .code
+        case .codeBlock, .diagram: .code
         default: .body
         }
     }
@@ -112,6 +115,11 @@ public enum FlatBlockKind: Sendable, Equatable {
     case paragraph
     case heading(Int)
     case codeBlock
+    /// A mermaid code block swapped to render as a raster. The flattener never
+    /// emits this — mermaid fences stay `.codeBlock` until the session swaps
+    /// them once a raster exists. Runs/spans keep the fence source so copy and
+    /// VoiceOver still work; only the on-glass form changes.
+    case diagram
     case listItem
     /// P2 degraded table rendering (mono, cells joined); P5 replaces with real
     /// column layout.
@@ -175,7 +183,16 @@ private struct Flattener {
             }
             // span nil = content isn't a contiguous source slice; source copy
             // then falls back to the whole fenced block, which is honest.
-            emit(block, kind: .codeBlock, language: language, runs: [
+            //
+            // Mermaid fences flatten as PENDING diagrams: a loading skeleton
+            // from first paint (never a flash of source), the raster swapped
+            // in async, and a fall back to a code block if rendering fails.
+            // A fence past the chunking limit would fragment and can never
+            // render, so it stays a code block up front.
+            let kind: FlatBlockKind =
+                isMermaidLanguage(language) && text.utf16.count <= Self.maxBlockUTF16
+                ? .diagram : .codeBlock
+            emit(block, kind: kind, language: language, runs: [
                 StyledRun(text: text, traits: .mono, color: .codeText, span: span)
             ])
 

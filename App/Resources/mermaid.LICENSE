@@ -1,0 +1,7 @@
+mermaid v11.16.0 — MIT License
+Copyright (c) 2014-2022 Knut Sveidqvist
+Upstream: https://github.com/mermaid-js/mermaid
+
+Bundled unmodified as mermaid.min.js (the standalone browser build). The
+trailing comment block inside the bundle carries the licenses of its vendored
+dependencies (DOMPurify, js-yaml, lodash-es, cytoscape, ...).

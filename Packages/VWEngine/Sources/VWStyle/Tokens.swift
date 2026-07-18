@@ -14,6 +14,8 @@ public enum ColorToken: Sendable, Hashable, CaseIterable {
     case selection
     /// Blockquote gutter bar.
     case quoteBar
+    /// Ghost shapes on the loading skeleton shown while a diagram renders.
+    case diagramSkeleton
     /// Task-list checkbox: border of the empty box, and the checkmark drawn
     /// over the accent-filled checked box.
     case checkboxBorder

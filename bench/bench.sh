@@ -28,7 +28,7 @@ run_case() {
 }
 
 run_case "blank window (shell baseline)"
-for f in bench/corpus/small.md bench/corpus/typical-llm.md bench/corpus/large.md; do
+for f in bench/corpus/small.md bench/corpus/typical-llm.md bench/corpus/mermaid.md bench/corpus/large.md; do
   if [[ -f "$f" ]]; then
     run_case "$f" "$f"
   else

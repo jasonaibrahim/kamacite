@@ -1,31 +1,62 @@
 {
-  "recorded": "2026-07-12",
-  "milestone": "P8 sign-off",
+  "policy": [
+    "This file is the perf contract, enforced by bench/gate.py (run via `make check`).",
+    "Every metric under `gates` has a `ceiling` — the regression bar, set from quiet-",
+    "machine measurements plus noise headroom — and cold corpora also carry `budget`,",
+    "the absolute product budget from the README. Exceeding either fails the gate.",
+    "Raising a ceiling is a deliberate, reviewed act: the same change MUST append an",
+    "entry to `revisions` (date, reason, what moved and why the cost is justified);",
+    "gate.py fails any ceiling raise that arrives without a new revisions entry.",
+    "Lowering a ceiling needs no ceremony. `reference` numbers are informational",
+    "(warm/huge paths have no automated harness yet) and are not machine-checked."
+  ],
   "machine": "Apple M1 Max, macOS 26.5 (Darwin 25.5.0)",
-  "method": "process start → MTLDrawable presented handler (glass time); p50 of n=10 unless noted",
-  "budgets_and_results": {
-    "blank_window_cold_ms": { "budget": null, "p50": 143.4, "p95": 151.2 },
-    "small_2kb_cold_ms": { "budget": 400, "p50": 154.2, "p95": 161.9 },
-    "typical_50kb_cold_ms": { "budget": 400, "p50": 152.6, "p95": 156.7 },
-    "large_5mb_cold_ms": { "budget": 700, "p50": 170.2, "p95": 183.1 },
-    "huge_100mb_cold_first_viewport_ms": { "budget": 2000, "single_run": 169.3 },
-    "typical_50kb_warm_ms": { "budget": 150, "single_run": 22.2 },
-    "large_5mb_warm_ms": { "budget": 400, "single_run": 47.8 },
-    "huge_100mb_warm_ms": { "budget": null, "single_run": 46.1 },
-    "scroll_frame_large_5mb_ms": {
-      "budget_120hz": 8.33,
-      "p50": 0.67, "p95": 0.90, "p99": 1.96, "worst": 3.52,
-      "note": "480 frames, fully serialized encode+GPU per frame (pessimistic), scrollbar included, 65 of 35344 blocks resident"
+  "method": "cold: process start → MTLDrawable presented handler (glass time), p50 of n=10 via bench/bench.sh; scroll: 480 fully serialized encode+GPU frames over large.md (VW_SCROLL_BENCH=1), p95",
+  "gates": {
+    "cold_first_pixel_p50_ms": {
+      "(blank)": { "ceiling": 260, "budget": null },
+      "small.md": { "ceiling": 260, "budget": 400 },
+      "typical-llm.md": { "ceiling": 260, "budget": 400 },
+      "mermaid.md": { "ceiling": 260, "budget": 400 },
+      "large.md": { "ceiling": 320, "budget": 700 }
     },
-    "first_paint_slice": {
-      "large_5mb_full_parse_after_first_paint_ms": 425,
-      "huge_100mb_full_parse_after_first_paint_ms": 8199,
-      "huge_full_block_count": 704644
-    }
+    "scroll_frame_p95_ms": { "ceiling": 8.33 }
   },
-  "notes": [
-    "All numbers measured with selection structures, appearance reactivity, scrollbar, and async syntax highlighting active — no bench-only fast paths.",
-    "Cold p95 excludes the one-time Gatekeeper scan of a freshly signed binary (~500-900ms first launch of a new build).",
-    "Documents >1MB open via the first-paint slice (fence-aware ≤256KB sync parse); the full parse splices in on a background task with viewport anchoring."
+  "reference": {
+    "recorded": "2026-07-12",
+    "milestone": "P8 sign-off",
+    "budgets_and_results": {
+      "blank_window_cold_ms": { "budget": null, "p50": 143.4, "p95": 151.2 },
+      "small_2kb_cold_ms": { "budget": 400, "p50": 154.2, "p95": 161.9 },
+      "typical_50kb_cold_ms": { "budget": 400, "p50": 152.6, "p95": 156.7 },
+      "large_5mb_cold_ms": { "budget": 700, "p50": 170.2, "p95": 183.1 },
+      "huge_100mb_cold_first_viewport_ms": { "budget": 2000, "single_run": 169.3 },
+      "typical_50kb_warm_ms": { "budget": 150, "single_run": 22.2 },
+      "large_5mb_warm_ms": { "budget": 400, "single_run": 47.8 },
+      "huge_100mb_warm_ms": { "budget": null, "single_run": 46.1 },
+      "scroll_frame_large_5mb_ms": {
+        "budget_120hz": 8.33,
+        "p50": 0.67, "p95": 0.90, "p99": 1.96, "worst": 3.52,
+        "note": "480 frames, fully serialized encode+GPU per frame (pessimistic), scrollbar included, 65 of 35344 blocks resident"
+      },
+      "first_paint_slice": {
+        "large_5mb_full_parse_after_first_paint_ms": 425,
+        "huge_100mb_full_parse_after_first_paint_ms": 8199,
+        "huge_full_block_count": 704644
+      }
+    },
+    "notes": [
+      "All numbers measured with selection structures, appearance reactivity, scrollbar, and async syntax highlighting active — no bench-only fast paths.",
+      "Cold p95 excludes the one-time Gatekeeper scan of a freshly signed binary (~500-900ms first launch of a new build).",
+      "Documents >1MB open via the first-paint slice (fence-aware ≤256KB sync parse); the full parse splices in on a background task with viewport anchoring.",
+      "Benchmark on a quiet machine: p50 of 10 runs shrugs off one or two noisy launches, but sustained CPU load (builds, agent fleets) inflates every phase and will trip ceilings a quiet re-run passes."
+    ]
+  },
+  "revisions": [
+    {
+      "date": "2026-07-17",
+      "reason": "Initial machine-checked gate, landed with the mermaid-diagram feature. Cold ceilings set from quiet-machine p50s (~165-195ms across corpora, including WebKit now linked — pre-main unchanged at ~6.2ms) with ~1.4x noise headroom; scroll ceiling is the 120Hz frame budget the in-app bench already enforces. mermaid.md corpus added to pin that diagram work (skeleton layout, raster requests) stays off the first-paint path.",
+      "changes": "all gates introduced"
+    }
   ]
 }
