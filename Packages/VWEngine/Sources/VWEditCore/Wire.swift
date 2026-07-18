@@ -14,6 +14,9 @@ public struct WireRequest: Codable, Sendable {
     /// Optimistic-concurrency assert for `edit`/`commit`.
     public var revision: UInt64?
     public var edits: [WireEdit]?
+    /// Resolve and validate the batch, report would-be spans and context,
+    /// apply NOTHING. The agent's look-before-you-leap.
+    public var preview: Bool?
     /// Byte range for `read`: [start, end).
     public var range: [Int]?
     public var force: Bool?
@@ -38,25 +41,39 @@ public struct WireRequest: Codable, Sendable {
     }
 }
 
-/// One edit in a batch: either a byte-range replacement
-/// (`{"range":[s,e),"text":…}`) or a find/replace
-/// (`{"old":…,"new":…,"all"?:bool}`) resolved server-side.
+/// One edit in a batch, three shapes:
+/// - `{"range":[s,e),"text":…}` — raw byte-range replacement.
+/// - `{"old":…,"new":…,"all"?:bool,"expect"?:int}` — find/replace; `expect`
+///   asserts the total occurrence count (the guard against a stale mental
+///   model of how many matches remain).
+/// - `{"at":[s,e),"old":…,"new":…}` — VERIFIED splice: replace the bytes at
+///   `at`, which must equal `old`. Byte-range precision plus content
+///   verification; a previous response's `spans` are safe addresses here.
 public struct WireEdit: Codable, Sendable, Equatable {
     public var range: [Int]?
     public var text: String?
     public var old: String?
     public var new: String?
     public var all: Bool?
+    public var expect: Int?
+    public var at: [Int]?
 
     public init(range: [Int]? = nil, text: String? = nil) {
         self.range = range
         self.text = text
     }
 
-    public init(old: String, new: String, all: Bool? = nil) {
+    public init(old: String, new: String, all: Bool? = nil, expect: Int? = nil) {
         self.old = old
         self.new = new
         self.all = all
+        self.expect = expect
+    }
+
+    public init(at: [Int], old: String, new: String) {
+        self.at = at
+        self.old = old
+        self.new = new
     }
 }
 
@@ -75,6 +92,8 @@ public enum WireErrorCode: String, Sendable {
     case invalidRange = "invalid_range"
     case overlappingEdits = "overlapping_edits"
     case revisionMismatch = "revision_mismatch"
+    case spanMismatch = "span_mismatch"
+    case expectationFailed = "expectation_failed"
     case diskChanged = "disk_changed"
     case commitFailed = "commit_failed"
     case dumpFailed = "dump_failed"

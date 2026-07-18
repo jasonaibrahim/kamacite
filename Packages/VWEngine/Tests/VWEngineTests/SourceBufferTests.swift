@@ -149,6 +149,24 @@ private func text(_ buffer: SourceBuffer) -> String {
         #expect(!valid.wasCanonicalized)
     }
 
+    @Test func validateRaisesApplyErrorsWithoutMutating() throws {
+        let b = buffer("hé🚀llo")
+        #expect(throws: SourceEditError.notCharacterBoundary(offset: 2)) {
+            try b.validate([SourceEdit(span: SourceSpan(startUTF8: 2, endUTF8: 3), replacement: "x")])
+        }
+        #expect(throws: SourceEditError.overlappingEdits(index: 1)) {
+            try b.validate([
+                SourceEdit(span: SourceSpan(startUTF8: 0, endUTF8: 3), replacement: "x"),
+                SourceEdit(span: SourceSpan(startUTF8: 1, endUTF8: 3), replacement: "y"),
+            ])
+        }
+        // A valid batch validates cleanly and — being non-mutating — leaves
+        // bytes and version untouched.
+        try b.validate([SourceEdit(span: SourceSpan(startUTF8: 0, endUTF8: 1), replacement: "H")])
+        #expect(text(b) == "hé🚀llo")
+        #expect(b.version == 0)
+    }
+
     @Test func replaceAllBumpsVersion() throws {
         var b = buffer("old")
         let version = b.version

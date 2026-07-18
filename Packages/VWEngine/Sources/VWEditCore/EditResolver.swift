@@ -11,6 +11,11 @@ public enum ResolveError: Error, Equatable {
     case noMatch(old: String)
     case nonUniqueMatch(old: String, count: Int, offsets: [Int])
     case invalidRange(start: Int, end: Int, bytes: Int)
+    /// A verified splice's `at` span no longer reads `old` — the buffer
+    /// moved (or the belief was stale). `actual` is what's there now.
+    case spanMismatch(start: Int, end: Int, actual: String)
+    /// `expect` asserted a match count the buffer doesn't have.
+    case expectationFailed(old: String, count: Int, expected: Int)
 }
 
 /// Turn a wire batch into engine edits (pre-batch byte coordinates).
@@ -25,8 +30,8 @@ public func resolveEdits(_ wireEdits: [WireEdit], against data: Data) throws -> 
     }
     var resolved: [SourceEdit] = []
     for edit in wireEdits {
-        switch (edit.range, edit.text, edit.old, edit.new) {
-        case (let range?, let text?, nil, nil):
+        switch (edit.range, edit.text, edit.at, edit.old, edit.new) {
+        case (let range?, let text?, nil, nil, nil):
             guard range.count == 2, range[0] >= 0, range[0] <= range[1] else {
                 throw ResolveError.invalidRequest("range must be [start, end) with start <= end")
             }
@@ -37,11 +42,38 @@ public func resolveEdits(_ wireEdits: [WireEdit], against data: Data) throws -> 
                 span: SourceSpan(startUTF8: range[0], endUTF8: range[1]),
                 replacement: text
             ))
-        case (nil, nil, let old?, let new?):
+        case (nil, nil, let at?, let old?, let new?):
+            // Verified splice: the span must still read `old`, so an edit
+            // can only land where the agent last SAW that content — the
+            // string matching elsewhere can't hijack it.
+            guard at.count == 2, at[0] >= 0, at[0] <= at[1] else {
+                throw ResolveError.invalidRequest("at must be [start, end) with start <= end")
+            }
+            guard at[1] <= data.count else {
+                throw ResolveError.invalidRange(start: at[0], end: at[1], bytes: data.count)
+            }
+            if data.subdata(in: at[0]..<at[1]) != Data(old.utf8) {
+                throw ResolveError.spanMismatch(
+                    start: at[0], end: at[1],
+                    actual: String(decoding: data.subdata(in: at[0]..<at[1]).prefix(120), as: UTF8.self)
+                )
+            }
+            resolved.append(SourceEdit(
+                span: SourceSpan(startUTF8: at[0], endUTF8: at[1]),
+                replacement: new
+            ))
+        case (nil, nil, nil, let old?, let new?):
             guard !old.isEmpty else {
                 throw ResolveError.invalidRequest("old must be non-empty")
             }
             let offsets = occurrences(of: Data(old.utf8), in: data)
+            if let expected = edit.expect, offsets.count != expected {
+                // The stale-mental-model guard: "I believe N remain" is
+                // checked before anything lands, not discovered after.
+                throw ResolveError.expectationFailed(
+                    old: old, count: offsets.count, expected: expected
+                )
+            }
             guard !offsets.isEmpty else {
                 throw ResolveError.noMatch(old: old)
             }
@@ -59,11 +91,41 @@ public func resolveEdits(_ wireEdits: [WireEdit], against data: Data) throws -> 
             }
         default:
             throw ResolveError.invalidRequest(
-                "each edit is either {range, text} or {old, new, all?}"
+                "each edit is {range, text}, {old, new, all?, expect?}, or {at, old, new}"
             )
         }
     }
     return resolved
+}
+
+/// Context snippet per resolved edit for responses and previews: the
+/// replacement text spliced into its pre-batch surroundings — cheap
+/// self-verification without a follow-up read. (Margins read the PRE-batch
+/// buffer, so a snippet won't reflect an ADJACENT edit from the same batch;
+/// margins snap to UTF-8 scalar boundaries.)
+public func editContexts(
+    of edits: [SourceEdit], against data: Data, margin: Int = 40
+) -> [String] {
+    let ascending = edits.enumerated().sorted {
+        ($0.element.span.startUTF8, $0.element.span.endUTF8, $0.offset)
+            < ($1.element.span.startUTF8, $1.element.span.endUTF8, $1.offset)
+    }
+    func snap(_ offset: Int, down: Bool) -> Int {
+        var o = min(max(offset, 0), data.count)
+        while o > 0, o < data.count, data[data.startIndex + o] & 0xC0 == 0x80 {
+            o += down ? -1 : 1
+        }
+        return o
+    }
+    return ascending.map { entry in
+        let span = entry.element.span
+        let before = snap(span.startUTF8 - margin, down: true)
+        let after = snap(span.endUTF8 + margin, down: false)
+        var snippet = data.subdata(in: before..<span.startUTF8)
+        snippet.append(entry.element.replacement)
+        snippet.append(data.subdata(in: span.endUTF8..<after))
+        return String(decoding: snippet, as: UTF8.self)
+    }
 }
 
 /// Non-overlapping occurrences of `needle`, left to right.

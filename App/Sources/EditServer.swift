@@ -211,13 +211,31 @@ final class EditServer {
         if let asserted = request.revision, asserted != view.revision {
             return revisionMismatch(request, actual: view.revision, asserted: asserted)
         }
+        let bytes = view.editableBytes()
         let resolved: [SourceEdit]
         do {
-            resolved = try resolveEdits(request.edits ?? [], against: view.editableBytes())
+            resolved = try resolveEdits(request.edits ?? [], against: bytes)
         } catch let error as ResolveError {
             return failure(for: error, id: request.id)
         } catch {
             return WireResponse.failure(id: request.id, code: .invalidRequest, message: "\(error)")
+        }
+        if request.preview == true {
+            // Look before you leap: same resolution, same validation, same
+            // errors an apply would raise — nothing lands, revision holds.
+            do {
+                try view.validateEdits(resolved)
+            } catch let error as SourceEditError {
+                return failure(for: error, id: request.id)
+            } catch {
+                return WireResponse.failure(id: request.id, code: .invalidRequest, message: "\(error)")
+            }
+            var result = docState(view)
+            result["preview"] = true
+            result["would_apply"] = resolved.count
+            result["spans"] = postApplySpans(of: resolved)
+            result["contexts"] = editContexts(of: resolved, against: bytes)
+            return WireResponse.ok(id: request.id, result: result)
         }
         let outcome: DocumentSession.EditApplyOutcome
         do {
@@ -230,6 +248,7 @@ final class EditServer {
         var result = docState(view)
         result["applied"] = resolved.count
         result["spans"] = postApplySpans(of: resolved)
+        result["contexts"] = editContexts(of: resolved, against: bytes)
         // Honesty about the preview: the buffer (and revision) always carry
         // the edit, but a large-document fallback re-derives the screen
         // asynchronously — agents polling a debug-dump should know to wait.
@@ -325,6 +344,18 @@ final class EditServer {
                 id: id, code: .invalidRange,
                 message: "range [\(start), \(end)) exceeds \(bytes) bytes",
                 extras: ["bytes": bytes]
+            )
+        case .spanMismatch(let start, let end, let actual):
+            return WireResponse.failure(
+                id: id, code: .spanMismatch,
+                message: "bytes at [\(start), \(end)) no longer read the asserted old text",
+                extras: ["at": [start, end], "actual": actual]
+            )
+        case .expectationFailed(let old, let count, let expected):
+            return WireResponse.failure(
+                id: id, code: .expectationFailed,
+                message: "old text occurs \(count) times, expected \(expected)",
+                extras: ["old": old, "count": count, "expected": expected]
             )
         }
     }

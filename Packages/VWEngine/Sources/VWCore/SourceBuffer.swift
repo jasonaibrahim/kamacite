@@ -72,26 +72,12 @@ public struct SourceBuffer: Sendable {
         }
     }
 
-    /// Atomic: the whole batch is validated first (in bounds, non-overlapping,
-    /// scalar-aligned edges, valid replacement UTF-8), then applied
-    /// back-to-front so every span stays in pre-batch coordinates. Throws with
-    /// the buffer and version untouched. Adjacent edits are legal; same-offset
-    /// insertions land in batch order. An empty batch is a no-op (no version
-    /// bump).
-    public mutating func apply(_ edits: [SourceEdit]) throws -> SourceEditSummary {
-        guard !edits.isEmpty else {
-            let empty = SourceSpan(startUTF8: 0, endUTF8: 0)
-            return SourceEditSummary(changedPreEdit: empty, changedPostEdit: empty, byteDelta: 0)
-        }
-
-        // Deterministic order regardless of stdlib sort stability: position,
-        // then batch index (so same-offset insertions keep batch order after
-        // the back-to-front application below).
-        let sorted = edits.enumerated().sorted {
-            ($0.element.span.startUTF8, $0.element.span.endUTF8, $0.offset)
-                < ($1.element.span.startUTF8, $1.element.span.endUTF8, $1.offset)
-        }
-
+    /// Batch validation alone (in bounds, non-overlapping, scalar-aligned
+    /// edges, valid replacement UTF-8) — what `apply` runs before touching a
+    /// byte, exposed so a PREVIEW can promise the same errors an apply would
+    /// raise without mutating anything.
+    public func validate(_ edits: [SourceEdit]) throws {
+        let sorted = Self.deterministicOrder(edits)
         for (position, entry) in sorted.enumerated() {
             let (batchIndex, edit) = (entry.offset, entry.element)
             guard edit.span.endUTF8 <= data.count else {
@@ -110,6 +96,33 @@ public struct SourceBuffer: Sendable {
                 throw SourceEditError.invalidReplacementUTF8(index: batchIndex)
             }
         }
+    }
+
+    /// Deterministic order regardless of stdlib sort stability: position,
+    /// then batch index (so same-offset insertions keep batch order after
+    /// back-to-front application).
+    private static func deterministicOrder(
+        _ edits: [SourceEdit]
+    ) -> [(offset: Int, element: SourceEdit)] {
+        edits.enumerated().sorted {
+            ($0.element.span.startUTF8, $0.element.span.endUTF8, $0.offset)
+                < ($1.element.span.startUTF8, $1.element.span.endUTF8, $1.offset)
+        }.map { (offset: $0.offset, element: $0.element) }
+    }
+
+    /// Atomic: the whole batch is validated first, then applied back-to-front
+    /// so every span stays in pre-batch coordinates. Throws with the buffer
+    /// and version untouched. Adjacent edits are legal; same-offset
+    /// insertions land in batch order. An empty batch is a no-op (no version
+    /// bump).
+    public mutating func apply(_ edits: [SourceEdit]) throws -> SourceEditSummary {
+        guard !edits.isEmpty else {
+            let empty = SourceSpan(startUTF8: 0, endUTF8: 0)
+            return SourceEditSummary(changedPreEdit: empty, changedPostEdit: empty, byteDelta: 0)
+        }
+
+        try validate(edits)
+        let sorted = Self.deterministicOrder(edits)
 
         let unionStart = sorted.first!.element.span.startUTF8
         let unionEnd = sorted.map(\.element.span.endUTF8).max()!

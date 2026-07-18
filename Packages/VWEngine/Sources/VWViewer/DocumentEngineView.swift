@@ -85,6 +85,8 @@ public final class DocumentEngineView: NSView {
     public var revision: UInt64 { session.revision }
     /// Buffer length without materializing the buffer (status responses).
     public var byteCount: Int { session.byteCount }
+    /// Preview support: apply's validation without apply's effects.
+    public func validateEdits(_ edits: [SourceEdit]) throws { try session.validateEdits(edits) }
     /// Current buffer bytes for find/replace resolution, range reads, and
     /// commits — canonicalized, so exchanged offsets are always in the same
     /// space the engine edits in.

@@ -72,12 +72,19 @@ the standard edited dot and Commit/Discard/Cancel close prompt.
 
 ```sh
 kama edit notes.md --old "## Status: draft" --new "## Status: final"
+kama edit notes.md --preview --old "x" --new "y" --all --expect 3   # dry-run + count guard
+kama edit notes.md --at 214:230 --old "## Status: final" --new "## Done"  # verified splice
 kama read notes.md --range 0:200 --raw       # buffer truth, not disk
 kama edit notes.md --revision 3 --range 10:14 --text "new"   # optimistic CAS
 kama commit notes.md                          # atomic write; kama discard reverts
 kama status notes.md --hash                   # {revision, dirty, disk_changed, …}
 kama debug-dump notes.md /tmp/frame.png       # offscreen render — agent eyes
 ```
+
+Edit responses return the post-apply `spans` and `contexts` of each replacement —
+`--at S:E` (span-asserted content), `--expect N` (match-count assert), and
+`--preview` exist so an agent states its beliefs and fails loudly when they're
+stale, instead of landing an edit somewhere it no longer intends.
 
 Responses are one JSON line each (`{"ok":true,"result":{…}}` / structured error
 codes: `non_unique_match`, `revision_mismatch`, `disk_changed`, …). Edits within one

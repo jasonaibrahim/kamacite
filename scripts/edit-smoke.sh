@@ -101,6 +101,32 @@ R=$("$KAMA" commit "$DOC" --force)
 expect_contains "$R" '"dirty":false' "forced commit"
 tail -1 "$DOC" | grep -q "external" && fail "force commit kept the external line (buffer should win)"
 
+# Preview: reports would-be spans + contexts, applies nothing.
+REV_BEFORE=$("$KAMA" status "$DOC" | grep -o '"revision":[0-9]*')
+R=$("$KAMA" edit "$DOC" --preview --old "(SMOKE-2)" --new "(SMOKE-3)")
+expect_contains "$R" '"preview":true' "preview flagged"
+expect_contains "$R" '"would_apply":1' "preview counts"
+expect_contains "$R" '"contexts"' "preview shows context"
+[ "$("$KAMA" status "$DOC" | grep -o '"revision":[0-9]*')" = "$REV_BEFORE" ] \
+    || fail "preview must not change the revision"
+
+# Verified splice: --at asserts content at the span; a stale address fails.
+SPAN=$("$KAMA" edit "$DOC" --old "(SMOKE-2)" --new "(SMOKE-AT)" | sed 's/.*"spans":\[\[\([0-9]*\),\([0-9]*\)\].*/\1:\2/')
+R=$("$KAMA" edit "$DOC" --at "$SPAN" --old "(SMOKE-AT)" --new "(SMOKE-VERIFIED)")
+expect_contains "$R" '"applied":1' "verified splice at returned span"
+set +e
+R=$("$KAMA" edit "$DOC" --at "$SPAN" --old "(SMOKE-AT)" --new "(nope)"); CODE=$?
+set -e
+[ "$CODE" = "1" ] || fail "stale --at should exit 1"
+expect_contains "$R" '"code":"span_mismatch"' "stale span refused"
+
+# Expect: a wrong match-count belief fails before anything lands.
+set +e
+R=$("$KAMA" edit "$DOC" --old "the" --new "THE" --all --expect 1); CODE=$?
+set -e
+[ "$CODE" = "1" ] || fail "wrong --expect should exit 1"
+expect_contains "$R" '"code":"expectation_failed"' "expect guard"
+
 # Inode dedup: the same file through a symlink reuses the window.
 ln -s "$DOC" "$WORK/link.md"
 R=$("$KAMA" open "$WORK/link.md")

@@ -237,6 +237,13 @@ public final class DocumentSession {
     /// faults the whole mmap) — a `status` on a 100MB document shouldn't.
     public var byteCount: Int { data.count }
 
+    /// Preview support: raise exactly the errors `applyEdits` would, mutate
+    /// nothing.
+    public func validateEdits(_ edits: [SourceEdit]) throws {
+        ensureSourceBuffer()
+        try sourceBuffer!.validate(edits)
+    }
+
     private func ensureSourceBuffer() {
         guard sourceBuffer == nil else { return }
         sourceBuffer = SourceBuffer(data: data)

@@ -132,6 +132,53 @@ import VWCore
         #expect(occurrences(of: Data("".utf8), in: Data("x".utf8)) == [])
     }
 
+    @Test func verifiedSpliceChecksContentAtSpan() throws {
+        // "beta" sits at [6, 10): the assertion binds the edit to that spot.
+        let ok = try resolveEdits([WireEdit(at: [6, 10], old: "beta", new: "BETA")], against: data)
+        #expect(ok == [SourceEdit(span: SourceSpan(startUTF8: 6, endUTF8: 10), replacement: "BETA")])
+
+        // Same string elsewhere can't satisfy a mismatched span — the whole
+        // point: a stale address fails loudly with what's actually there.
+        #expect(throws: ResolveError.spanMismatch(start: 0, end: 4, actual: "alph")) {
+            try resolveEdits([WireEdit(at: [0, 4], old: "beta", new: "BETA")], against: data)
+        }
+        #expect(throws: ResolveError.invalidRange(start: 0, end: 999, bytes: data.count)) {
+            try resolveEdits([WireEdit(at: [0, 999], old: "x", new: "y")], against: data)
+        }
+    }
+
+    @Test func expectGuardsTheMatchCount() throws {
+        // Correct belief: two occurrences, replace all two.
+        let ok = try resolveEdits(
+            [WireEdit(old: "beta", new: "x", all: true, expect: 2)], against: data
+        )
+        #expect(ok.count == 2)
+        // Stale belief ("one remains") fails BEFORE anything lands — the
+        // simulation's double-emoji incident, made impossible.
+        #expect(throws: ResolveError.expectationFailed(old: "beta", count: 2, expected: 1)) {
+            try resolveEdits([WireEdit(old: "beta", new: "x", all: true, expect: 1)], against: data)
+        }
+        // Expect works without --all too (asserting uniqueness explicitly).
+        #expect(throws: ResolveError.expectationFailed(old: "beta", count: 2, expected: 3)) {
+            try resolveEdits([WireEdit(old: "beta", new: "x", expect: 3)], against: data)
+        }
+    }
+
+    @Test func editContextsSpliceReplacementIntoSurroundings() {
+        let edits = [
+            SourceEdit(span: SourceSpan(startUTF8: 6, endUTF8: 10), replacement: "BETA"),
+        ]
+        let contexts = editContexts(of: edits, against: data, margin: 6)
+        #expect(contexts == ["alpha BETA gamma"])
+        // Margins snap to scalar boundaries on multibyte content.
+        let multibyte = Data("aé🚀 target rest".utf8)
+        let snapped = editContexts(
+            of: [SourceEdit(span: SourceSpan(startUTF8: 8, endUTF8: 14), replacement: "hit")],
+            against: multibyte, margin: 5
+        )
+        #expect(snapped == ["🚀 hit rest"])
+    }
+
     @Test func postApplySpansAccountForEarlierDeltas() {
         let edits = [
             SourceEdit(span: SourceSpan(startUTF8: 10, endUTF8: 12), replacement: "wide-open"),

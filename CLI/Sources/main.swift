@@ -34,8 +34,10 @@ usage: kama [--perf] <file.md> …                    open in the viewer
        kama open <file>                             open via the edit server
        kama status <file> [--hash]
        kama read <file> [--range S:E] [--raw]
-       kama edit <file> [--revision N] (--old S --new S [--all] |
-                                        --range S:E --text T | --stdin-json)
+       kama edit <file> [--revision N] [--preview]
+                        (--old S --new S [--all] [--expect N] |
+                         --at S:E --old S --new S |
+                         --range S:E --text T | --stdin-json)
        kama commit <file> [--revision N] [--force]
        kama discard <file>
        kama debug-dump <file> <out.png>
@@ -78,6 +80,8 @@ if let verb = arguments.first, verbs.contains(verb) {
     var pendingOld: String?
     var pendingNew: String?
     var pendingAll = false
+    var pendingExpect: Int?
+    var pendingAt: [Int]?
     var pendingRange: [Int]?
     var pendingText: String?
 
@@ -101,6 +105,14 @@ if let verb = arguments.first, verbs.contains(verb) {
         case "--hash": request.hash = true
         case "--raw": raw = true
         case "--all": pendingAll = true
+        case "--preview": request.preview = true
+        case "--expect":
+            let text = value("--expect")
+            guard let parsed = Int(text), parsed > 0 else {
+                fail("kama: --expect wants a positive integer, got \(text)", code: 64)
+            }
+            pendingExpect = parsed
+        case "--at": pendingAt = parseByteRange(value("--at"))
         case "--old": pendingOld = value("--old")
         case "--new": pendingNew = value("--new")
         case "--text": pendingText = value("--text")
@@ -124,9 +136,19 @@ if let verb = arguments.first, verbs.contains(verb) {
     }
 
     if let old = pendingOld, let new = pendingNew {
-        wireEdits.append(WireEdit(old: old, new: new, all: pendingAll ? true : nil))
-    } else if pendingOld != nil || pendingNew != nil {
-        fail("kama: --old and --new go together", code: 64)
+        if let at = pendingAt {
+            if pendingAll || pendingExpect != nil {
+                fail("kama: --at is a verified splice; --all/--expect don't apply", code: 64)
+            }
+            wireEdits.append(WireEdit(at: at, old: old, new: new))
+        } else {
+            wireEdits.append(WireEdit(
+                old: old, new: new,
+                all: pendingAll ? true : nil, expect: pendingExpect
+            ))
+        }
+    } else if pendingOld != nil || pendingNew != nil || pendingAt != nil {
+        fail("kama: --old and --new go together (--at needs both)", code: 64)
     }
     if let range = pendingRange {
         guard let text = pendingText else { fail("kama: --range wants --text", code: 64) }
