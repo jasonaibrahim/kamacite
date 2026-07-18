@@ -17,6 +17,7 @@ public func firstPaintSliceLength(of data: Data, limit: Int = 256 * 1024) -> Int
     var lastSafeCut = 0
     var inFence = false
     var fenceMarker: UInt8 = 0
+    var fenceLength = 0
 
     data.withUnsafeBytes { (buffer: UnsafeRawBufferPointer) in
         let bytes = buffer.bindMemory(to: UInt8.self)
@@ -43,16 +44,35 @@ public func firstPaintSliceLength(of data: Data, limit: Int = 256 * 1024) -> Int
                 lastSafeCut = lineEnd + 1
             }
 
-            // ``` or ~~~ after ≤3 spaces toggles fence state.
-            if leadingSpaces < 4, i + 2 < lineEnd {
+            // Fence toggling, with the CommonMark details that matter for not
+            // being fooled: a CLOSER is marker-only and at least as long as
+            // the opener ("```---" inside a ``` fence is content, not a
+            // close), and a backtick OPENER's info string may not contain a
+            // backtick.
+            if leadingSpaces < 4, i < lineEnd {
                 let marker = bytes[i]
-                if marker == 0x60 || marker == 0x7E, // ` or ~
-                   bytes[i + 1] == marker, bytes[i + 2] == marker {
-                    if inFence {
-                        if marker == fenceMarker { inFence = false }
-                    } else {
-                        inFence = true
-                        fenceMarker = marker
+                if marker == 0x60 || marker == 0x7E { // ` or ~
+                    var run = 0
+                    while i + run < lineEnd, bytes[i + run] == marker { run += 1 }
+                    if run >= 3 {
+                        var rest = i + run
+                        var restIsBlank = true
+                        var restHasBacktick = false
+                        while rest < lineEnd {
+                            let byte = bytes[rest]
+                            if byte != 0x20, byte != 0x09, byte != 0x0D { restIsBlank = false }
+                            if byte == 0x60 { restHasBacktick = true }
+                            rest += 1
+                        }
+                        if inFence {
+                            if marker == fenceMarker, run >= fenceLength, restIsBlank {
+                                inFence = false
+                            }
+                        } else if marker == 0x7E || !restHasBacktick {
+                            inFence = true
+                            fenceMarker = marker
+                            fenceLength = run
+                        }
                     }
                 }
             }

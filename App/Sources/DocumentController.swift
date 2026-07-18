@@ -18,14 +18,22 @@ final class DocumentController: NSObject {
     }
 
     func open(url: URL) {
+        do {
+            try openWindow(url: url)
+        } catch {
+            presentOpenFailure(url: url, error: error)
+        }
+    }
+
+    /// The one open path, UI-error-free so the edit server can catch into a
+    /// structured error instead of an alert.
+    @discardableResult
+    func openWindow(url: URL) throws -> DocumentWindowController {
         // One window per document: re-opening (Finder, CLI, recents) focuses
         // the existing window instead of duplicating it.
-        let standardized = url.standardizedFileURL.path
-        if let existing = windowControllers.first(where: {
-            $0.viewedDocument?.url.standardizedFileURL.path == standardized
-        }) {
+        if let existing = controller(for: url) {
             existing.showWindow(nil)
-            return
+            return existing
         }
 
         let trace = PerfReporter.shared.beginTrace(label: url.lastPathComponent)
@@ -34,13 +42,37 @@ final class DocumentController: NSObject {
             document = try Document(url: url)
         } catch {
             PerfReporter.shared.openFailed(trace)
-            presentOpenFailure(url: url, error: error)
-            return
+            throw error
         }
         trace.bytes = document.data.count
         trace.mark("read")
         NSDocumentController.shared.noteNewRecentDocumentURL(url)
-        show(DocumentWindowController(document: document), trace: trace)
+        let controller = DocumentWindowController(document: document)
+        show(controller, trace: trace)
+        return controller
+    }
+
+    /// Window viewing the given file, matched by path OR file identity —
+    /// standardizedFileURL doesn't resolve symlinks, so the same inode
+    /// reached through two spellings must not get two windows. Identity is
+    /// resolved fresh on both sides at comparison time (a commit's atomic
+    /// rename changes the inode; caching would go stale).
+    func controller(for url: URL) -> DocumentWindowController? {
+        let standardized = url.standardizedFileURL.path
+        let identity = fileIdentity(url)
+        return windowControllers.first { controller in
+            guard let documentURL = controller.viewedDocument?.url else { return false }
+            if documentURL.standardizedFileURL.path == standardized { return true }
+            guard let identity, let documentIdentity = fileIdentity(documentURL) else { return false }
+            return identity.isEqual(documentIdentity)
+        }
+    }
+
+    private func fileIdentity(_ url: URL) -> (NSCopying & NSSecureCoding & NSObjectProtocol)? {
+        // Resolve symlinks first: resource values describe the item AT the
+        // URL, and a symlink's own identifier is not its target's.
+        (try? url.resolvingSymlinksInPath()
+            .resourceValues(forKeys: [.fileResourceIdentifierKey]))?.fileResourceIdentifier
     }
 
     /// Bench baseline: an empty window with no document — measures the shell alone.

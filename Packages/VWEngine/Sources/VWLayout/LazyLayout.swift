@@ -79,7 +79,7 @@ public final class LazyLayout {
         self.contentWidth = contentWidth
         self.scale = scale
         self.tree = BlockGeometryTree(estimatedHeights: Self.estimate(
-            document: document, fonts: fonts, metrics: metrics, contentWidth: contentWidth
+            blocks: document.blocks[...], fonts: fonts, metrics: metrics, contentWidth: contentWidth
         ))
     }
 
@@ -92,12 +92,12 @@ public final class LazyLayout {
     // MARK: - Estimation
 
     private static func estimate(
-        document: FlatDocument, fonts: FontTable, metrics: Metrics, contentWidth: CGFloat
+        blocks: ArraySlice<FlatBlock>, fonts: FontTable, metrics: Metrics, contentWidth: CGFloat
     ) -> [Double] {
         var slots: [FontClass: CGFloat] = [:]
         var widths: [FontClass: CGFloat] = [:]
 
-        return document.blocks.map { block in
+        return blocks.map { block in
             let baseClass = block.baseFontClass
             let slotHeight = slots[baseClass] ?? {
                 let h = fonts.lineSlot(for: baseClass).height
@@ -529,6 +529,63 @@ public final class LazyLayout {
         let block = document.blocks[index]
         let before = index == 0 ? 0 : spacingBefore(block, metrics: metrics)
         return before + blockHeight + spacingAfter(block, metrics: metrics)
+    }
+
+    /// Live-edit splice: replace a block range with freshly parsed blocks,
+    /// preserving exact heights (and shaped cache) everywhere outside it —
+    /// the "glass never moves" half of live editing. A full rebuild would
+    /// revert every exact height to an estimate, making the viewport jump by
+    /// the accumulated estimate error on EVERY edit, and drift compound.
+    ///
+    /// Returns the scroll adjustment that keeps content at `anchorY` fixed
+    /// (prepare()'s contract; the caller adds it to its scroll offset). When
+    /// the anchor block itself was replaced, the splice start is the least
+    /// surprising anchor: content above it provably didn't move.
+    public func applySplice(_ splice: ContentEditSplice, anchorY: CGFloat) -> CGFloat {
+        let hadBlocks = blockCount > 0
+        let anchorDocY = Double(max(0, anchorY))
+        let anchorIndex = hadBlocks ? tree.blockIndex(at: anchorDocY) : 0
+        let withinBlock = hadBlocks ? anchorDocY - tree.yOffset(of: anchorIndex) : 0
+
+        applyEditSplice(splice, to: &document)
+
+        let newRange = splice.blockRange.lowerBound
+            ..< (splice.blockRange.lowerBound + splice.newBlocks.count)
+        let newHeights = Self.estimate(
+            blocks: document.blocks[newRange],
+            fonts: fonts, metrics: metrics, contentWidth: contentWidth
+        )
+        tree.splice(splice.blockRange, with: newHeights)
+
+        // Cache keys are positional: drop the replaced range, shift the
+        // suffix, and drop the immediate predecessor too — its quote bars
+        // were measured against the OLD next block (appendQuoteBars bridges
+        // bar gaps by peeking ahead). Exact heights stay; only shaping redoes.
+        let blockDelta = splice.blockDelta
+        var remapped: [Int: CachedBlock] = [:]
+        remapped.reserveCapacity(cache.count)
+        for (key, value) in cache {
+            if key < splice.blockRange.lowerBound - 1 {
+                remapped[key] = value
+            } else if key >= splice.blockRange.upperBound {
+                remapped[key + blockDelta] = value
+            }
+        }
+        cache = remapped
+        // Table indices shifted; widths re-measure lazily (≤64-row sample).
+        tableWidths.removeAll()
+
+        guard hadBlocks, blockCount > 0 else { return 0 }
+        let mappedAnchor: Int
+        if anchorIndex < splice.blockRange.lowerBound {
+            mappedAnchor = anchorIndex
+        } else if anchorIndex >= splice.blockRange.upperBound {
+            mappedAnchor = anchorIndex + blockDelta
+        } else {
+            mappedAnchor = min(splice.blockRange.lowerBound, blockCount - 1)
+        }
+        let clampedWithin = min(withinBlock, tree.height(of: mappedAnchor))
+        return CGFloat(tree.yOffset(of: mappedAnchor) + clampedWithin) - CGFloat(anchorDocY)
     }
 
     // MARK: - Queries

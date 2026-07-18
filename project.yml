@@ -43,6 +43,8 @@ targets:
     dependencies:
       - package: VWEngine
         product: VWViewer
+      - package: VWEngine
+        product: VWEditCore
       - target: kama-cli
         embed: false
     info:
@@ -115,6 +117,11 @@ targets:
       base:
         PRODUCT_NAME: kama-cli
         SWIFT_DEFAULT_ACTOR_ISOLATION: nonisolated
+    dependencies:
+      # Wire types + socket path + framing only — VWEditCore depends on
+      # VWCore alone, so the CLI stays free of swift-markdown and the engine.
+      - package: VWEngine
+        product: VWEditCore
 
 schemes:
   kamacite:

@@ -17,7 +17,7 @@ DIST           := dist
 DMG            := $(DIST)/Kamacite-$(VERSION).dmg
 
 .PHONY: generate build run test bench bench-gate check install dev-link clean \
-        spike spike-dump release sign dmg notarize
+        spike spike-dump release sign dmg notarize smoke edit-bench
 
 generate:
 	$(XCODEGEN) generate
@@ -41,9 +41,23 @@ bench: build
 bench-gate: build
 	python3 bench/gate.py $(APP)
 
-# The full pre-PR suite: engine unit tests + the perf gate. A change that
-# fails `make check` either fixes its regression or justifies a new ceiling.
-check: test bench-gate
+# End-to-end smoke of the edit server: real app, isolated socket, every verb
+# through the kama CLI, byte truth asserted on disk.
+smoke: build
+	scripts/edit-smoke.sh
+
+# Edit-latency measurement (informational; a baseline ceiling lands once
+# quiet-machine numbers exist): seeded synthetic edits through the real
+# apply→encode path. VW_EDIT_STORM=1 with the scroll bench checks edits
+# don't break 120Hz.
+edit-bench: build
+	VW_EDIT_BENCH=1 $(APP)/Contents/MacOS/Kamacite --bench bench/corpus/typical-llm.md
+	VW_EDIT_BENCH=1 $(APP)/Contents/MacOS/Kamacite --bench bench/corpus/large.md
+
+# The full pre-PR suite: engine unit tests + the perf gate + the edit-server
+# smoke. A change that fails `make check` either fixes its regression or
+# justifies a new ceiling.
+check: test bench-gate smoke
 
 install: build
 	ditto $(APP) /Applications/Kamacite.app

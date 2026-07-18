@@ -71,6 +71,35 @@ public final class DocumentEngineView: NSView {
     private var diagramTextures: [UInt64: MTLTexture] = [:]
     private static let diagramTextureBudgetBytes = 64 << 20
 
+    // Editing.
+    /// The App's edit seam (the onOpenLink/diagramRenderer precedent): the
+    /// IPC server drives live edits and commit/discard through these — the
+    /// session itself stays private.
+    @discardableResult
+    public func applyEdits(
+        _ edits: [SourceEdit], mark: ((String) -> Void)? = nil
+    ) throws -> DocumentSession.EditApplyOutcome {
+        try session.applyEdits(edits, mark: mark)
+    }
+    public var isDirty: Bool { session.isDirty }
+    public var revision: UInt64 { session.revision }
+    /// Buffer length without materializing the buffer (status responses).
+    public var byteCount: Int { session.byteCount }
+    /// Preview support: apply's validation without apply's effects.
+    public func validateEdits(_ edits: [SourceEdit]) throws { try session.validateEdits(edits) }
+    /// Current buffer bytes for find/replace resolution, range reads, and
+    /// commits — canonicalized, so exchanged offsets are always in the same
+    /// space the engine edits in.
+    public func editableBytes() -> Data { session.editableBytes() }
+    public func commitSnapshot() -> (data: Data, version: UInt64) { session.commitSnapshot() }
+    public func markCommitted(version: UInt64) { session.markCommitted(version: version) }
+    public func discardEdits(to diskData: Data) { session.discardEdits(to: diskData) }
+    /// Fired on dirty-state transitions (window edited-dot wiring).
+    public var onDirtyChange: ((Bool) -> Void)? {
+        get { session.onDirtyChange }
+        set { session.onDirtyChange = newValue }
+    }
+
     // Font zoom (⌘+/⌘−/⌘0), persisted across launches.
     private static let fontScaleDefaultsKey = "kamacite.fontScale"
     private var fontScale: CGFloat = {
@@ -99,6 +128,9 @@ public final class DocumentEngineView: NSView {
         session.onContentSplice = { [weak self] in
             self?.handleContentSplice()
         }
+        session.onContentEdit = { [weak self] splice in
+            self?.handleContentEdit(splice)
+        }
         session.onDiagramReady = { [weak self] index, image in
             self?.handleDiagramReady(index: index, image: image)
         }
@@ -126,6 +158,60 @@ public final class DocumentEngineView: NSView {
         pruneDiagramTexturesToReferenced()
         showScrollbar() // content height jumped; flash the new proportions
         setNeedsRender()
+    }
+
+    /// A bounded edit splice landed in the session's document: splice the
+    /// layout copy (height-preserving, anchored to the live viewport top so
+    /// glass never moves), shape the fresh blocks THIS frame (one frame of
+    /// latency, never a flash of estimates), and re-render.
+    private func handleContentEdit(_ splice: ContentEditSplice) {
+        guard let layout = session.layout else { return }
+        let adjustment = layout.applySplice(
+            splice, anchorY: max(0, visibleDocRange.lowerBound)
+        )
+        if adjustment != 0 {
+            scrollOffsetPts += adjustment
+        }
+        // prepare()'s adjustment matters here too: shaping fresh blocks ABOVE
+        // the viewport corrects their estimates, and dropping that delta
+        // would shift glass by the estimate error.
+        scrollOffsetPts += layout.prepare(
+            docRange: expand(visibleDocRange, by: bounds.height),
+            anchorY: max(0, visibleDocRange.lowerBound)
+        )
+        // The handleDiagramResize convention: while a rubber-band gesture owns
+        // the offset, leave the overshoot alone (snap-back converges it).
+        if !gestureActive, !momentumActive, snapBack == nil {
+            scrollOffsetPts = min(max(0, scrollOffsetPts), maxScrollPts)
+        }
+        remapSelection(for: splice)
+        pruneDiagramTexturesToReferenced()
+        showScrollbar() // content height may have changed; flash proportions
+        setNeedsRender()
+    }
+
+    /// Selection survives edits elsewhere in the document (indices shift by
+    /// the splice's block delta); a selection endpoint inside the replaced
+    /// range has no meaningful mapping — clear rather than guess.
+    private func remapSelection(for splice: ContentEditSplice) {
+        guard let current = selection else { return }
+        func remap(_ position: TextPosition) -> TextPosition? {
+            if position.blockIndex < splice.blockRange.lowerBound { return position }
+            if position.blockIndex >= splice.blockRange.upperBound {
+                return TextPosition(
+                    blockIndex: position.blockIndex + splice.blockDelta,
+                    utf16Offset: position.utf16Offset
+                )
+            }
+            return nil
+        }
+        if let anchor = remap(current.anchor), let focus = remap(current.focus) {
+            selection = DocumentSelection(anchor: anchor, focus: focus)
+        } else {
+            selection = nil
+            dragging = false
+            autoscrollVelocityPts = 0
+        }
     }
 
     // MARK: - Diagrams (async raster → anchored swap)
@@ -367,6 +453,7 @@ public final class DocumentEngineView: NSView {
 
         dumpFrameIfRequested(renderer: renderer, frame: frame, scale: scale)
         scheduleScrollBenchIfRequested()
+        scheduleEditBenchIfRequested()
     }
 
     private func ensureRenderer() -> DocumentRenderer? {
@@ -1057,6 +1144,25 @@ public final class DocumentEngineView: NSView {
 
     // MARK: - Debug hooks
 
+    /// Offscreen render of the CURRENT frame to a PNG — the edit server's
+    /// `debug-dump` verb, which is also how an agent "sees" the document.
+    @discardableResult
+    public func debugDumpFrame(to url: URL) -> Bool {
+        guard let renderer = ensureRenderer(), session.layout != nil,
+              bounds.width > 0, bounds.height > 0 else { return false }
+        let scale = self.scale
+        let frame = buildFrame()
+        let texture = renderer.renderOffscreen(
+            layout: frame.layout, theme: session.theme, originPts: contentOriginPts,
+            scale: scale, selectionRects: frame.selectionRects, overlayPills: scrollbarPills(),
+            diagramTextures: diagramTextures,
+            width: Int(bounds.width * scale), height: Int(bounds.height * scale)
+        )
+        let bytes = DocumentRenderer.bgraBytes(from: texture)
+        writeBGRAPNG(bytes, width: texture.width, height: texture.height, to: url)
+        return FileManager.default.fileExists(atPath: url.path)
+    }
+
     private func dumpFrameIfRequested(renderer: DocumentRenderer, frame: Frame, scale: CGFloat) {
         guard let path = ProcessInfo.processInfo.environment["VW_DUMP_FRAME"], !path.isEmpty else { return }
         let texture = renderer.renderOffscreen(
@@ -1094,10 +1200,117 @@ public final class DocumentEngineView: NSView {
         }
     }
 
+    /// VW_EDIT_BENCH=1: after first present, apply seeded synthetic edits
+    /// through the REAL path — buffer splice, bounded reparse, layout splice,
+    /// offscreen encode — and report edit→frame-encoded latency. Prints a
+    /// VWEDIT JSON line and exits. Informational until a quiet-machine
+    /// ceiling lands in bench/baseline.json (with its revisions entry).
+    private func scheduleEditBenchIfRequested() {
+        guard ProcessInfo.processInfo.environment["VW_EDIT_BENCH"] == "1" else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            self?.runEditBench()
+        }
+    }
+
+    /// One deterministic synthetic edit against the current buffer: replace a
+    /// small span at a pseudo-random scalar-aligned offset (mostly), with
+    /// periodic pure inserts and deletes. Mirrors an agent's steady drip.
+    private func syntheticEdit(round: Int, state: inout UInt64) -> SourceEdit? {
+        let bytes = session.editableBytes()
+        guard bytes.count > 64 else { return nil }
+        func next() -> UInt64 {
+            state = state &* 6364136223846793005 &+ 1442695040888963407
+            return state
+        }
+        var offset = Int(next() % UInt64(bytes.count - 32))
+        while offset > 0, bytes[bytes.startIndex + offset] & 0xC0 == 0x80 { offset -= 1 }
+        var end = min(bytes.count, offset + Int(next() % 24))
+        while end > offset, end < bytes.count, bytes[bytes.startIndex + end] & 0xC0 == 0x80 { end -= 1 }
+        switch round % 8 {
+        case 6: end = offset // pure insert
+        case 7: return SourceEdit(span: SourceSpan(startUTF8: offset, endUTF8: end), replacement: "")
+        default: break
+        }
+        return SourceEdit(
+            span: SourceSpan(startUTF8: offset, endUTF8: end),
+            replacement: "edited\(round) "
+        )
+    }
+
+    private func runEditBench() {
+        Task { @MainActor in
+            await runEditBenchAsync()
+        }
+    }
+
+    /// Await session convergence after an async fallback: a tight synchronous
+    /// loop would starve the main actor, every subsequent edit would report
+    /// `.queued` against a stale document, and the numbers would be fiction.
+    private func awaitContentSplice() async {
+        let original = session.onContentSplice
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            session.onContentSplice = { [weak self] in
+                original?()
+                self?.session.onContentSplice = original
+                continuation.resume()
+            }
+        }
+    }
+
+    private func runEditBenchAsync() async {
+        guard let renderer = ensureRenderer(), session.layout != nil else { exit(1) }
+        let rounds = 200
+        var state: UInt64 = 0x9E37_79B9_7F4A_7C15
+        var times: [Double] = []
+        times.reserveCapacity(rounds)
+        var bounded = 0
+        var fallbacks = 0
+
+        for round in 0..<rounds {
+            guard let edit = syntheticEdit(round: round, state: &state) else { continue }
+            let start = CACurrentMediaTime()
+            guard let outcome = try? session.applyEdits([edit]) else { continue }
+            switch outcome {
+            case .appliedBounded:
+                bounded += 1
+            case .appliedFullReparse:
+                fallbacks += 1
+            case .scheduledFullReparse, .queued:
+                // Honest latency: the edit is only "done" when it's on glass.
+                fallbacks += 1
+                await awaitContentSplice()
+            }
+            let frame = buildFrame()
+            _ = renderer.renderOffscreen(
+                layout: frame.layout, theme: session.theme, originPts: contentOriginPts,
+                scale: scale, selectionRects: frame.selectionRects, overlayPills: scrollbarPills(),
+                diagramTextures: diagramTextures,
+                width: Int(bounds.width * scale), height: Int(bounds.height * scale)
+            )
+            times.append((CACurrentMediaTime() - start) * 1000)
+        }
+        guard !times.isEmpty else { exit(1) }
+
+        times.sort()
+        let p50 = times[times.count / 2]
+        let p95 = times[Int(Double(times.count) * 0.95)]
+        let p99 = times[Int(Double(times.count) * 0.99)]
+        let worst = times.last ?? 0
+        FileHandle.standardError.write(Data("""
+        vw edit-bench  \(times.count) edits, apply + serialized encode+GPU
+          p50 \(String(format: "%.2f", p50)) ms   p95 \(String(format: "%.2f", p95)) ms   p99 \(String(format: "%.2f", p99)) ms   worst \(String(format: "%.2f", worst)) ms
+          bounded \(bounded), full-reparse \(fallbacks)
+        VWEDIT {"p50_ms":\(String(format: "%.3f", p50)),"p95_ms":\(String(format: "%.3f", p95)),"p99_ms":\(String(format: "%.3f", p99)),"worst_ms":\(String(format: "%.3f", worst)),"edits":\(times.count),"bounded":\(bounded)}
+
+        """.utf8))
+        exit(0)
+    }
+
     /// VW_SCROLL_BENCH=1: after first present, time N synthetic scroll frames
     /// (each fully serialized encode→GPU-complete — a pessimistic upper bound),
     /// print stats, exit. Runs the REAL frame path: lazy prepare, anchoring,
-    /// selection plumbing, eviction.
+    /// selection plumbing, eviction. VW_EDIT_STORM=1 additionally applies an
+    /// edit every 8th frame — live-edit streams must not break 120Hz scroll.
     private func scheduleScrollBenchIfRequested() {
         guard ProcessInfo.processInfo.environment["VW_SCROLL_BENCH"] == "1" else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
@@ -1114,9 +1327,16 @@ public final class DocumentEngineView: NSView {
 
         // Scrolling always shows the scrollbar — the bench includes its cost.
         scrollbarAlpha = 1
+        let editStorm = ProcessInfo.processInfo.environment["VW_EDIT_STORM"] == "1"
+        var editState: UInt64 = 0x9E37_79B9_7F4A_7C15
         for i in 0..<frames {
             scrollOffsetPts = min(max(0, scrollOffsetPts + (i < frames / 2 ? step : -step)), maxScrollPts)
             let start = CACurrentMediaTime()
+            // Edit-storm frames pay apply + splice INSIDE the timed region:
+            // a live agent stream must not break the frame budget.
+            if editStorm, i % 8 == 0, let edit = syntheticEdit(round: i, state: &editState) {
+                _ = try? session.applyEdits([edit])
+            }
             let frame = buildFrame()
             let texture = renderer.renderOffscreen(
                 layout: frame.layout, theme: session.theme, originPts: contentOriginPts,

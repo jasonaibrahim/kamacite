@@ -6,15 +6,22 @@ import VWCore
 // with parent back-references and no Sendable conformance; it is converted and
 // released before this function returns.
 
-public func parseMarkdown(data: Data) -> ContentTree {
+public func parseMarkdown(data: Data, spanOffset: Int = 0, mintingIDsFrom idBase: UInt64 = 0) -> ContentTree {
     // Lossy decode: invalid UTF-8 becomes U+FFFD. Spans stay consistent because
     // the line table is built over the same decoded string cmark parses.
-    parseMarkdown(String(decoding: data, as: UTF8.self))
+    parseMarkdown(String(decoding: data, as: UTF8.self), spanOffset: spanOffset, mintingIDsFrom: idBase)
 }
 
-public func parseMarkdown(_ text: String) -> ContentTree {
+/// `spanOffset` rebases every emitted span: a bounded edit reparse hands in a
+/// substring plus its byte position in the whole document, and the resulting
+/// blocks splice into the full document's coordinate space untouched.
+/// `mintingIDsFrom` keeps BlockIDs unique across such partial parses.
+public func parseMarkdown(_ text: String, spanOffset: Int = 0, mintingIDsFrom idBase: UInt64 = 0) -> ContentTree {
     let document = Document(parsing: text)
-    var converter = Converter(source: text, lineTable: LineTable(text: text))
+    var converter = Converter(
+        source: text, lineTable: LineTable(text: text),
+        spanOffset: spanOffset, idBase: idBase
+    )
     let blocks = document.children.compactMap { converter.block($0) }
     return ContentTree(blocks: blocks, sourceUTF8Count: converter.lineTable.utf8Count)
 }
@@ -22,11 +29,17 @@ public func parseMarkdown(_ text: String) -> ContentTree {
 private struct Converter {
     let source: String
     let lineTable: LineTable
-    private var nextID: UInt64 = 0
+    let spanOffset: Int
+    private var nextID: UInt64
+    /// Span of the block currently being converted — the containment bound
+    /// for its inline spans (see `inlineSpan`).
+    private var currentBlockSpan = SourceSpan(startUTF8: 0, endUTF8: 0)
 
-    init(source: String, lineTable: LineTable) {
+    init(source: String, lineTable: LineTable, spanOffset: Int = 0, idBase: UInt64 = 0) {
         self.source = source
         self.lineTable = lineTable
+        self.spanOffset = spanOffset
+        self.nextID = idBase
     }
 
     private mutating func mintID() -> BlockID {
@@ -36,11 +49,13 @@ private struct Converter {
 
     private func span(_ markup: Markup) -> SourceSpan {
         guard let range = markup.range else {
+            // Rangeless markup keeps the absolute (0,0) sentinel — rebasing a
+            // "no source position" marker would invent one.
             return SourceSpan(startUTF8: 0, endUTF8: 0)
         }
         let start = lineTable.utf8Offset(line: range.lowerBound.line, column: range.lowerBound.column)
         let end = lineTable.utf8Offset(line: range.upperBound.line, column: range.upperBound.column)
-        return SourceSpan(startUTF8: min(start, end), endUTF8: max(start, end))
+        return SourceSpan(startUTF8: spanOffset + min(start, end), endUTF8: spanOffset + max(start, end))
     }
 
     // MARK: - Blocks
@@ -48,6 +63,11 @@ private struct Converter {
     mutating func block(_ markup: Markup) -> ContentBlock? {
         let id = mintID()
         let span = span(markup)
+        // Nested blocks (quotes, lists) each rebound this for THEIR inlines;
+        // restore so a parent's remaining children check against the parent.
+        let outerBlockSpan = currentBlockSpan
+        currentBlockSpan = span
+        defer { currentBlockSpan = outerBlockSpan }
 
         switch markup {
         case let heading as Heading:
@@ -118,7 +138,10 @@ private struct Converter {
                     break
                 }
                 if matches {
-                    return SourceSpan(startUTF8: start, endUTF8: start + codeBytes.count)
+                    return SourceSpan(
+                        startUTF8: spanOffset + start,
+                        endUTF8: spanOffset + start + codeBytes.count
+                    )
                 }
             }
             return nil
@@ -168,8 +191,25 @@ private struct Converter {
         parent.children.compactMap { inline($0) }
     }
 
+    /// Inline spans must nest inside their block's span. swift-markdown
+    /// occasionally reports inline HTML ranges anchored at line 1 col 1
+    /// regardless of position; a span that escapes its block would make
+    /// byte-exact source copy slice the wrong bytes, and (worse for editing)
+    /// a rebased chunk parse and a full parse would disagree on it. Corrupt
+    /// spans degrade to the absolute (0,0) "no source position" sentinel.
+    private func inlineSpan(_ markup: Markup) -> SourceSpan {
+        let candidate = span(markup)
+        guard candidate.isEmpty
+            || (candidate.startUTF8 >= currentBlockSpan.startUTF8
+                && candidate.endUTF8 <= currentBlockSpan.endUTF8)
+        else {
+            return SourceSpan(startUTF8: 0, endUTF8: 0)
+        }
+        return candidate
+    }
+
     private func inline(_ markup: Markup) -> InlineNode? {
-        let span = span(markup)
+        let span = inlineSpan(markup)
         switch markup {
         case let text as Markdown.Text:
             return InlineNode(span: span, kind: .text(text.string))

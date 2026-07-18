@@ -8,7 +8,11 @@ let package = Package(
     name: "VWEngine",
     platforms: [.macOS(.v15)],
     products: [
-        .library(name: "VWViewer", targets: ["VWViewer"])
+        .library(name: "VWViewer", targets: ["VWViewer"]),
+        // The edit-server protocol core (wire types, framing, find/replace
+        // resolution, socket path, atomic write). Depends on VWCore only, so
+        // the kama CLI links it without pulling swift-markdown or the engine.
+        .library(name: "VWEditCore", targets: ["VWEditCore"]),
     ],
     dependencies: [
         // The only remote dependency in the repo (cmark-gfm under the hood).
@@ -16,6 +20,7 @@ let package = Package(
     ],
     targets: [
         .target(name: "VWCore"),
+        .target(name: "VWEditCore", dependencies: ["VWCore"]),
         .target(
             name: "VWParse",
             dependencies: ["VWCore", .product(name: "Markdown", package: "swift-markdown")]
@@ -31,7 +36,7 @@ let package = Package(
         ),
         .testTarget(
             name: "VWEngineTests",
-            dependencies: ["VWCore", "VWParse", "VWStyle", "VWText", "VWLayout", "VWRender", "VWInteraction", "VWViewer"],
+            dependencies: ["VWCore", "VWEditCore", "VWParse", "VWStyle", "VWText", "VWLayout", "VWRender", "VWInteraction", "VWViewer"],
             resources: [.copy("Goldens")]
         ),
     ],

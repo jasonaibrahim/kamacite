@@ -4,22 +4,8 @@ import VWParse
 import VWStyle
 @testable import VWLayout
 
-/// Deterministic LCG so property tests are reproducible.
-private struct SeededRandom {
-    private var state: UInt64
-    init(seed: UInt64) { state = seed }
-    mutating func next() -> UInt64 {
-        state = state &* 6364136223846793005 &+ 1442695040888963407
-        return state
-    }
-    mutating func double(in range: ClosedRange<Double>) -> Double {
-        let unit = Double(next() >> 11) / Double(1 << 53)
-        return range.lowerBound + unit * (range.upperBound - range.lowerBound)
-    }
-    mutating func int(in range: Range<Int>) -> Int {
-        range.lowerBound + Int(next() % UInt64(range.count))
-    }
-}
+// SeededRandom (the deterministic LCG these property tests use) lives in
+// MarkdownFuzz.swift — one copy for the whole test target.
 
 @Suite struct BlockGeometryTreeTests {
     @Test func prefixSumsMatchLinearScan() {

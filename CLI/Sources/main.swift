@@ -1,10 +1,15 @@
 import AppKit
+import VWEditCore
 
 // The kama CLI. Lives at Kamacite.app/Contents/Helpers/kama and is symlinked onto PATH.
 //
-// Opens files in the exact app bundle it ships inside — self-locating, so multiple
-// installed copies (DerivedData build + /Applications) never ambiguate — and reuses a
-// running instance via Launch Services. That reuse IS the warm-open fast path.
+// Two personalities:
+// - `kama file.md …` — the original viewer path: opens files in the exact app
+//   bundle it ships inside via Launch Services, reusing a running instance
+//   (that reuse IS the warm-open fast path).
+// - `kama <verb> file.md …` — the edit protocol client: one JSON line to the
+//   app's unix socket, the response line printed verbatim. Exit codes:
+//   0 ok, 1 server-reported error, 2 transport failure, 64 usage.
 
 func fail(_ message: String, code: Int32) -> Never {
     FileHandle.standardError.write(Data((message + "\n").utf8))
@@ -24,10 +29,156 @@ func locateAppBundle() -> URL? {
     return NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.xylophonexyz.kamacite")
 }
 
+let usage = """
+usage: kama [--perf] <file.md> …                    open in the viewer
+       kama open <file>                             open via the edit server
+       kama status <file> [--hash]
+       kama read <file> [--range S:E] [--raw]
+       kama edit <file> [--revision N] [--preview]
+                        (--old S --new S [--all] [--expect N] |
+                         --at S:E --old S --new S |
+                         --range S:E --text T | --stdin-json)
+       kama commit <file> [--revision N] [--force]
+       kama discard <file>
+       kama debug-dump <file> <out.png>
+       kama --version
+
+Edits land in the app's in-memory buffer (live preview); the file on disk
+changes only on commit. Responses are JSON lines on stdout.
+"""
+
+func standardizedPath(_ argument: String, mustExist: Bool) -> String {
+    let cwd = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+    let url = URL(fileURLWithPath: argument, relativeTo: cwd).standardizedFileURL
+    if mustExist, !FileManager.default.fileExists(atPath: url.path) {
+        fail("kama: no such file: \(argument)", code: 1)
+    }
+    return url.path
+}
+
+func parseByteRange(_ text: String) -> [Int] {
+    let parts = text.split(separator: ":")
+    guard parts.count == 2, let start = Int(parts[0]), let end = Int(parts[1]) else {
+        fail("kama: --range wants S:E byte offsets", code: 64)
+    }
+    return [start, end]
+}
+
+// MARK: - Verb dispatch
+
+let arguments = Array(CommandLine.arguments.dropFirst())
+
+let verbs: Set<String> = ["open", "status", "read", "edit", "commit", "discard", "debug-dump"]
+if let verb = arguments.first, verbs.contains(verb) {
+    var rest = Array(arguments.dropFirst())
+    guard !rest.isEmpty else { fail(usage, code: 64) }
+    let doc = standardizedPath(rest.removeFirst(), mustExist: verb == "open" || verb == "edit")
+
+    var request = WireRequest(cmd: verb, doc: doc)
+    var raw = false
+    var wireEdits: [WireEdit] = []
+    var pendingOld: String?
+    var pendingNew: String?
+    var pendingAll = false
+    var pendingExpect: Int?
+    var pendingAt: [Int]?
+    var pendingRange: [Int]?
+    var pendingText: String?
+
+    var index = 0
+    while index < rest.count {
+        let argument = rest[index]
+        func value(_ flag: String) -> String {
+            index += 1
+            guard index < rest.count else { fail("kama: \(flag) wants a value", code: 64) }
+            return rest[index]
+        }
+        switch argument {
+        case "--revision":
+            let text = value("--revision")
+            guard let parsed = UInt64(text) else {
+                // Silently dropping a malformed CAS token would defeat it.
+                fail("kama: --revision wants an integer, got \(text)", code: 64)
+            }
+            request.revision = parsed
+        case "--force": request.force = true
+        case "--hash": request.hash = true
+        case "--raw": raw = true
+        case "--all": pendingAll = true
+        case "--preview": request.preview = true
+        case "--expect":
+            let text = value("--expect")
+            guard let parsed = Int(text), parsed > 0 else {
+                fail("kama: --expect wants a positive integer, got \(text)", code: 64)
+            }
+            pendingExpect = parsed
+        case "--at": pendingAt = parseByteRange(value("--at"))
+        case "--old": pendingOld = value("--old")
+        case "--new": pendingNew = value("--new")
+        case "--text": pendingText = value("--text")
+        case "--range":
+            let range = parseByteRange(value("--range"))
+            if verb == "read" { request.range = range } else { pendingRange = range }
+        case "--stdin-json":
+            let input = FileHandle.standardInput.readDataToEndOfFile()
+            guard let parsed = try? JSONDecoder().decode([WireEdit].self, from: input) else {
+                fail("kama: --stdin-json wants a JSON array of edit objects", code: 64)
+            }
+            wireEdits.append(contentsOf: parsed)
+        default:
+            if verb == "debug-dump", request.path == nil {
+                request.path = standardizedPath(argument, mustExist: false)
+            } else {
+                fail("kama: unknown argument \(argument)\n\n\(usage)", code: 64)
+            }
+        }
+        index += 1
+    }
+
+    if let old = pendingOld, let new = pendingNew {
+        if let at = pendingAt {
+            if pendingAll || pendingExpect != nil {
+                fail("kama: --at is a verified splice; --all/--expect don't apply", code: 64)
+            }
+            wireEdits.append(WireEdit(at: at, old: old, new: new))
+        } else {
+            wireEdits.append(WireEdit(
+                old: old, new: new,
+                all: pendingAll ? true : nil, expect: pendingExpect
+            ))
+        }
+    } else if pendingOld != nil || pendingNew != nil || pendingAt != nil {
+        fail("kama: --old and --new go together (--at needs both)", code: 64)
+    }
+    if let range = pendingRange {
+        guard let text = pendingText else { fail("kama: --range wants --text", code: 64) }
+        wireEdits.append(WireEdit(range: range, text: text))
+    } else if pendingText != nil {
+        fail("kama: --text wants --range", code: 64)
+    }
+
+    switch verb {
+    case "edit":
+        guard !wireEdits.isEmpty else {
+            fail("kama: edit wants --old/--new, --range/--text, or --stdin-json", code: 64)
+        }
+        request.edits = wireEdits
+    case "debug-dump":
+        guard request.path != nil else { fail("kama: debug-dump wants an output png path", code: 64) }
+    default:
+        break
+    }
+
+    // `edit` auto-opens (launching the app if needed); queries never pop UI.
+    EditClient.run(request: request, autoOpen: verb == "edit", rawField: raw ? "text" : nil)
+}
+
+// MARK: - Viewer path (unchanged behavior)
+
 var perf = false
 var paths: [String] = []
 
-for argument in CommandLine.arguments.dropFirst() {
+for argument in arguments {
     switch argument {
     case "--version":
         guard let appURL = locateAppBundle(),
@@ -41,12 +192,7 @@ for argument in CommandLine.arguments.dropFirst() {
     case "--perf":
         perf = true
     case "--help", "-h":
-        print("""
-        usage: kama [--perf] <file.md> …
-               kama --version
-
-          --perf   print open/render phase timings to stderr (fresh launch only)
-        """)
+        print(usage)
         exit(0)
     default:
         paths.append(argument)
@@ -54,7 +200,7 @@ for argument in CommandLine.arguments.dropFirst() {
 }
 
 guard !paths.isEmpty else {
-    fail("usage: kama [--perf] <file.md> …", code: 64)
+    fail(usage, code: 64)
 }
 
 let cwd = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
