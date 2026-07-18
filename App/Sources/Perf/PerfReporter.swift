@@ -73,6 +73,7 @@ final class PerfReporter {
         // finishes its work (scroll benchmark / settled frame dump) and exits.
         let environment = ProcessInfo.processInfo.environment
         let deferredExit = environment["VW_SCROLL_BENCH"] == "1" || environment["VW_DUMP_SETTLED"] == "1"
+            || environment["VW_EDIT_BENCH"] == "1"
         defer { if benchMode && !deferredExit { exit(0) } }
         guard enabled else { return }
 

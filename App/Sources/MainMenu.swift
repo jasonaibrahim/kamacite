@@ -40,6 +40,14 @@ enum MainMenuBuilder {
         recentMenu.delegate = recents
         fileMenu.addItem(withTitle: "Open Recent", action: nil, keyEquivalent: "").submenu = recentMenu
         fileMenu.addItem(.separator())
+        // "Save" commits the live edit buffer to disk (agentic edits arrive
+        // in memory first). Nil-targeted: the window controller answers only
+        // while its buffer is dirty, which also grays the item out.
+        fileMenu.addItem(
+            withTitle: "Save",
+            action: #selector(DocumentWindowController.saveDocument(_:)),
+            keyEquivalent: "s")
+        fileMenu.addItem(.separator())
         fileMenu.addItem(
             withTitle: "Close",
             action: #selector(NSWindow.performClose(_:)),

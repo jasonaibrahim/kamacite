@@ -20,18 +20,35 @@ public struct BlockGeometryTree: Sendable {
     public init(estimatedHeights: [Double]) {
         heights = estimatedHeights
         exact = Array(repeating: false, count: estimatedHeights.count)
-        tree = Array(repeating: 0, count: estimatedHeights.count + 1)
+        tree = []
         totalHeight = 0
-        // O(n) Fenwick construction.
-        for (i, h) in estimatedHeights.enumerated() {
+        rebuild()
+    }
+
+    /// O(n) Fenwick construction from `heights`.
+    private mutating func rebuild() {
+        tree = Array(repeating: 0, count: heights.count + 1)
+        totalHeight = 0
+        for (i, h) in heights.enumerated() {
             let index = i + 1
             tree[index] += h
             let parent = index + (index & -index)
-            if parent <= estimatedHeights.count {
+            if parent <= heights.count {
                 tree[parent] += tree[index]
             }
             totalHeight += h
         }
+    }
+
+    /// Replace a range of blocks with fresh (estimated) heights. Heights and
+    /// exact flags OUTSIDE the range are preserved — that's the live-edit
+    /// guarantee that content above/below a splice doesn't move because
+    /// far-away exacts degraded to estimates. The Fenwick array rebuilds in
+    /// O(n); at 100MB-corpus block counts that is a few ms of pure sums.
+    public mutating func splice(_ range: Range<Int>, with newHeights: [Double]) {
+        heights.replaceSubrange(range, with: newHeights)
+        exact.replaceSubrange(range, with: Array(repeating: false, count: newHeights.count))
+        rebuild()
     }
 
     public func isExact(_ index: Int) -> Bool {

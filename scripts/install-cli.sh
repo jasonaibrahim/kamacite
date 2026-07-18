@@ -3,6 +3,9 @@
 set -euo pipefail
 
 APP="${1:-/Applications/Kamacite.app}"
+# Normalize: make dev-link passes a build-relative path, and a relative
+# symlink target dangles from the bin directory.
+APP="$(cd "$APP" && pwd)"
 HELPER="$APP/Contents/Helpers/kama"
 [[ -x "$HELPER" ]] || { echo "error: $HELPER not found (build the app first)" >&2; exit 1; }
 

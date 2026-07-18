@@ -59,6 +59,36 @@ kama --version
 The `kama` binary lives inside `Kamacite.app/Contents/Helpers/` and is symlinked onto
 PATH by `make install` / `make dev-link`.
 
+## Live editing (the edit server)
+
+The first half of native AI editing: the app runs a JSON-lines edit server on a unix
+socket (`~/Library/Application Support/Kamacite/kama.sock`, `$KAMACITE_SOCKET` to
+override). An agent sends edits — byte-range splices or uniqueness-checked
+find/replace — which land in an **in-memory buffer** with the on-screen preview
+updating live (bounded block-range reparse + height-preserving layout splice: only
+the edited neighborhood re-derives, glass never moves). The file on disk changes only
+on an explicit commit (atomic temp+rename), also reachable as ⌘S; the window carries
+the standard edited dot and Commit/Discard/Cancel close prompt.
+
+```sh
+kama edit notes.md --old "## Status: draft" --new "## Status: final"
+kama read notes.md --range 0:200 --raw       # buffer truth, not disk
+kama edit notes.md --revision 3 --range 10:14 --text "new"   # optimistic CAS
+kama commit notes.md                          # atomic write; kama discard reverts
+kama status notes.md --hash                   # {revision, dirty, disk_changed, …}
+kama debug-dump notes.md /tmp/frame.png       # offscreen render — agent eyes
+```
+
+Responses are one JSON line each (`{"ok":true,"result":{…}}` / structured error
+codes: `non_unique_match`, `revision_mismatch`, `disk_changed`, …). Edits within one
+request are atomic; `revision` increments per applied batch and is the CAS token.
+The socket is also the single-instance rendezvous: a launching copy of the app that
+finds it owned forwards its documents there and exits, so a dev build and an
+installed build never accumulate parallel windows (bench instances are exempt).
+`make smoke` drives the whole loop end to end; `make edit-bench` measures
+edit→pixels latency (typical-llm.md p50 <1 ms; large.md p50 ~6 ms, 120Hz scroll holds
+under a live edit storm).
+
 ## Layout
 
 ```
