@@ -5,8 +5,9 @@ import VWStyle
 import VWText
 
 // Encodes a DocumentLayout into a Metal render pass: painter's order is
-// solids-below (code backgrounds, rules) → gray glyph pages → color glyph
-// pages → solids-above (strikethrough). One instanced draw per bucket.
+// solids-below (code backgrounds, rules) → diagram rasters → content pills →
+// gray glyph pages → color glyph pages → solids-above (strikethrough).
+// One instanced draw per bucket.
 
 @MainActor
 public final class DocumentRenderer {
@@ -42,6 +43,7 @@ public final class DocumentRenderer {
     private let solidPipeline: MTLRenderPipelineState
     private let grayPipeline: MTLRenderPipelineState
     private let colorPipeline: MTLRenderPipelineState
+    private let imagePipeline: MTLRenderPipelineState
     private let pillPipeline: MTLRenderPipelineState
     private let atlas: GlyphAtlas
 
@@ -58,6 +60,7 @@ public final class DocumentRenderer {
         self.solidPipeline = core.solid
         self.grayPipeline = core.gray
         self.colorPipeline = core.color
+        self.imagePipeline = core.image
         self.pillPipeline = core.pill
     }
 
@@ -86,7 +89,9 @@ public final class DocumentRenderer {
     /// view space (centering inset minus scroll offset), points.
     /// `selectionRects` are content-column-relative document rects painted
     /// below glyphs (above block backgrounds). `overlayPills` are view-space
-    /// rounded rects painted above everything.
+    /// rounded rects painted above everything. `diagramTextures` resolves
+    /// PlacedDiagram imageKeys to rasters; a placed diagram with no entry
+    /// draws nothing (the viewer re-requests).
     public func encode(
         layout: DocumentLayout,
         theme: Theme,
@@ -94,6 +99,7 @@ public final class DocumentRenderer {
         scale: CGFloat,
         selectionRects: [CGRect] = [],
         overlayPills: [OverlayPill] = [],
+        diagramTextures: [UInt64: MTLTexture] = [:],
         target: MTLTexture,
         commandBuffer: MTLCommandBuffer
     ) {
@@ -114,6 +120,9 @@ public final class DocumentRenderer {
         var contentPills: [PillQuad] = []
         var grayGlyphs: [Int: [GlyphQuad]] = [:]
         var colorGlyphs: [Int: [GlyphQuad]] = [:]
+        // Diagram rasters keyed by texture (imageKey) — one draw per texture,
+        // the atlas-page pattern. Only keys with a texture are collected.
+        var diagramQuads: [UInt64: [GlyphQuad]] = [:]
 
         let pageBackground = theme.color(.pageBackground)
         let pageLuminance = (pageBackground.x + pageBackground.y + pageBackground.z) / 3
@@ -137,6 +146,25 @@ public final class DocumentRenderer {
                         max(1, Float((background.rectPts.height * scale).rounded()))
                     ),
                     color: theme.color(background.color)
+                ))
+            }
+
+            // Diagram raster: a full-texture quad in the placed rect, same
+            // shared-offset rounding as backgrounds (originDev/blockTopDev
+            // rounded once) so scrolling can't shimmer.
+            if let placed = block.diagram, diagramTextures[placed.imageKey] != nil {
+                diagramQuads[placed.imageKey, default: []].append(GlyphQuad(
+                    origin: SIMD2(
+                        originDev.x + Float((placed.rectPts.minX * scale).rounded()),
+                        blockTopDev + Float((placed.rectPts.minY * scale).rounded())
+                    ),
+                    size: SIMD2(
+                        Float((placed.rectPts.width * scale).rounded()),
+                        Float((placed.rectPts.height * scale).rounded())
+                    ),
+                    uvOrigin: SIMD2(0, 0),
+                    uvSize: SIMD2(1, 1),
+                    color: SIMD4(1, 1, 1, 1)
                 ))
             }
 
@@ -266,6 +294,12 @@ public final class DocumentRenderer {
         encoder.setVertexBytes(&viewport, length: MemoryLayout<SIMD2<Float>>.size, index: 1)
 
         drawSolids(solidsBelow, encoder: encoder)
+        if !diagramQuads.isEmpty {
+            encoder.setRenderPipelineState(imagePipeline)
+            for (imageKey, quads) in diagramQuads.sorted(by: { $0.key < $1.key }) {
+                drawGlyphs(quads, texture: diagramTextures[imageKey]!, encoder: encoder)
+            }
+        }
         drawPills(contentPills, encoder: encoder)
         encoder.setRenderPipelineState(grayPipeline)
         for (pageIndex, quads) in grayGlyphs.sorted(by: { $0.key < $1.key }) {
@@ -386,6 +420,7 @@ public final class DocumentRenderer {
     public func renderOffscreen(
         layout: DocumentLayout, theme: Theme, originPts: CGPoint,
         scale: CGFloat, selectionRects: [CGRect] = [], overlayPills: [OverlayPill] = [],
+        diagramTextures: [UInt64: MTLTexture] = [:],
         width: Int, height: Int
     ) -> MTLTexture {
         let descriptor = MTLTextureDescriptor.texture2DDescriptor(
@@ -398,6 +433,7 @@ public final class DocumentRenderer {
         encode(
             layout: layout, theme: theme, originPts: originPts, scale: scale,
             selectionRects: selectionRects, overlayPills: overlayPills,
+            diagramTextures: diagramTextures,
             target: texture, commandBuffer: commandBuffer
         )
         commandBuffer.commit()

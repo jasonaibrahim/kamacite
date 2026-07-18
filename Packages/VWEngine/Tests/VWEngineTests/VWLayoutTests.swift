@@ -182,3 +182,139 @@ private struct SeededRandom {
         }
     }
 }
+
+@Suite struct ReplaceBlockTests {
+    /// Paragraphs with a mermaid fence in the middle; returns the fence's
+    /// flat index.
+    private func makeDocument(paragraphs: Int) -> (FlatDocument, Int) {
+        var parts = (0..<paragraphs).map { i in
+            "Paragraph number \(i) with enough words to wrap across a couple of lines when shaped at a normal content width for reading."
+        }
+        parts.insert("```mermaid\ngraph TD; A-->B\n```", at: paragraphs / 2)
+        let document = flatten(parseMarkdown(parts.joined(separator: "\n\n")))
+        let index = document.blocks.firstIndex { $0.codeLanguage == "mermaid" }!
+        return (document, index)
+    }
+
+    @MainActor private func makeLayout(_ document: FlatDocument) -> LazyLayout {
+        let theme = Theme.light
+        return LazyLayout(
+            document: document, fonts: FontTable(metrics: theme.metrics),
+            metrics: theme.metrics, contentWidth: 600, scale: 2
+        )
+    }
+
+    /// The swapped block: same runs/spans (mermaid source stays copyable),
+    /// kind flipped to `.diagram` with a known raster geometry.
+    private func diagramBlock(
+        _ document: FlatDocument, index: Int, naturalSize: CGSize
+    ) -> FlatBlock {
+        var block = document.blocks[index]
+        block.kind = .diagram
+        block.diagram = DiagramInfo(imageKey: 0xD1A6, naturalSizePts: naturalSize)
+        return block
+    }
+
+    /// The anchoring contract: a swap strictly above the anchor reports
+    /// exactly the shift it caused, so the caller's scroll-offset adjustment
+    /// keeps on-glass content pinned.
+    @Test @MainActor func swapAboveAnchorReportsExactShift() {
+        let (document, index) = makeDocument(paragraphs: 60)
+        let layout = makeLayout(document)
+        let anchorY = layout.contentHeightPts * 0.9
+        let anchorIndex = layout.blockIndex(at: anchorY)
+        #expect(index < anchorIndex)
+
+        let offsetBefore = layout.yOffset(of: anchorIndex)
+        let heightBefore = layout.contentHeightPts
+        let adjustment = layout.replaceBlock(
+            at: index,
+            with: diagramBlock(document, index: index, naturalSize: CGSize(width: 400, height: 300)),
+            anchorY: anchorY
+        )
+        #expect(adjustment != 0)
+        #expect(abs((layout.yOffset(of: anchorIndex) - offsetBefore) - adjustment) < 0.001)
+        #expect(abs((layout.contentHeightPts - heightBefore) - adjustment) < 0.001)
+
+        let placed = layout.placedBlock(at: index)
+        #expect(placed.kind == .diagram)
+        // 400pt natural width fits inside 600 − 2×12 padding: shown 1:1,
+        // inset like code-block text, padding above and below.
+        #expect(placed.diagram?.rectPts == CGRect(x: 12, y: 12, width: 400, height: 300))
+        #expect(abs(placed.heightPts - 324) < 0.001)
+    }
+
+    @Test @MainActor func swapAtOrBelowAnchorReportsZero() {
+        let (document, index) = makeDocument(paragraphs: 60)
+        let layout = makeLayout(document)
+        let heightBefore = layout.contentHeightPts
+        let adjustment = layout.replaceBlock(
+            at: index,
+            with: diagramBlock(document, index: index, naturalSize: CGSize(width: 400, height: 300)),
+            anchorY: 0
+        )
+        #expect(adjustment == 0)
+        // The height still changed — only the scroll report is suppressed.
+        #expect(abs(layout.contentHeightPts - heightBefore) > 1)
+    }
+
+    /// Diagram geometry is a pure function of (FlatBlock, contentWidth, scale):
+    /// after eviction, re-shaping must reproduce the identical height and
+    /// placed rect with no help from the session.
+    @Test @MainActor func evictedDiagramReshapesToTheSameGeometry() {
+        let (document, index) = makeDocument(paragraphs: 120)
+        let layout = makeLayout(document)
+        _ = layout.replaceBlock(
+            at: index,
+            with: diagramBlock(document, index: index, naturalSize: CGSize(width: 2000, height: 1000)),
+            anchorY: 0
+        )
+        let placedBefore = layout.placedBlock(at: index)
+        #expect(placedBefore.diagram != nil)
+
+        // Shape everything, then evict a window that excludes the diagram.
+        layout.prepare(docRange: 0..<CGFloat.greatestFiniteMagnitude, anchorY: 0)
+        let heightBefore = layout.contentHeightPts
+        let far = layout.contentHeightPts - 100
+        layout.evict(keeping: far..<layout.contentHeightPts)
+
+        let placedAfter = layout.placedBlock(at: index) // re-shapes from the FlatBlock alone
+        #expect(abs(placedAfter.heightPts - placedBefore.heightPts) < 0.001)
+        #expect(placedAfter.diagram == placedBefore.diagram)
+        #expect(abs(layout.contentHeightPts - heightBefore) < 0.001)
+        // Natural width beyond the text width clamps, preserving aspect:
+        // 600 − 2×12 = 576 wide → 288 tall.
+        #expect(placedAfter.diagram?.rectPts == CGRect(x: 12, y: 12, width: 576, height: 288))
+    }
+
+    /// Estimation and exact shaping share the diagram arithmetic, so a
+    /// swapped block's estimate needs no anchored correction: shaping it
+    /// exactly moves the total height by nothing.
+    @Test @MainActor func diagramEstimateIsAlreadyExact() {
+        var (document, index) = makeDocument(paragraphs: 20)
+        document.blocks[index] = diagramBlock(
+            document, index: index, naturalSize: CGSize(width: 400, height: 300)
+        )
+        let layout = makeLayout(document)
+        let estimated = layout.contentHeightPts
+        _ = layout.placedBlock(at: index) // shapes ONLY the diagram block
+        #expect(abs(layout.contentHeightPts - estimated) < 0.001)
+    }
+
+    /// A pending mermaid fence lays out as the loading skeleton: estimate ==
+    /// exact (no anchored correction), no source text on glass, ghost quads
+    /// over code-block chrome, and no raster reference.
+    @Test @MainActor func pendingDiagramSkeletonEstimateIsExactAndTextless() {
+        let (document, index) = makeDocument(paragraphs: 20)
+        #expect(document.blocks[index].kind == .diagram)
+        #expect(document.blocks[index].diagram == nil)
+        let layout = makeLayout(document)
+        let estimated = layout.contentHeightPts
+        let placed = layout.placedBlock(at: index)
+        #expect(abs(layout.contentHeightPts - estimated) < 0.001)
+        #expect(placed.shaped.positionedLines.isEmpty)
+        #expect(placed.diagram == nil)
+        #expect(placed.backgrounds.contains { $0.color == .codeBackground })
+        #expect(placed.backgrounds.filter { $0.color == .diagramSkeleton }.count == 3)
+    }
+}

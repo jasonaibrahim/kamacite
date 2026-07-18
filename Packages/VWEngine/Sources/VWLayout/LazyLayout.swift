@@ -39,7 +39,7 @@ func spacingAfter(_ block: FlatBlock, metrics: Metrics) -> CGFloat {
     switch block.kind {
     case .heading: return metrics.headingSpacingAfter
     case .paragraph: return metrics.paragraphSpacing
-    case .codeBlock: return metrics.codeBlockSpacing
+    case .codeBlock, .diagram: return metrics.codeBlockSpacing
     case .listItem: return metrics.listItemSpacing
     case .tableRow: return 0
     case .rule: return metrics.ruleSpacing
@@ -48,7 +48,8 @@ func spacingAfter(_ block: FlatBlock, metrics: Metrics) -> CGFloat {
 
 @MainActor
 public final class LazyLayout {
-    /// Mutated only by replaceRuns(at:with:) — async syntax highlighting.
+    /// Mutated only by replaceRuns(at:with:) — async syntax highlighting —
+    /// and replaceBlock(at:with:anchorY:) — code placeholder → diagram swaps.
     public private(set) var document: FlatDocument
     public let fonts: FontTable
     public let metrics: Metrics
@@ -61,6 +62,7 @@ public final class LazyLayout {
         let blockHeightPts: CGFloat
         let textInsetPts: CGPoint
         let backgrounds: [BackgroundQuad]
+        let diagram: PlacedDiagram?
     }
     private var cache: [Int: CachedBlock] = [:]
     /// Column widths per table (padding included), measured once from a
@@ -109,7 +111,8 @@ public final class LazyLayout {
             }()
 
             let indent = CGFloat(block.indentLevel) * metrics.indentWidth
-            let padding = block.kind == .codeBlock ? metrics.codeBlockPadding : 0
+            let padding = block.kind == .codeBlock || block.kind == .diagram
+                ? metrics.codeBlockPadding : 0
             let textWidth = max(40, contentWidth - indent - padding * 2)
 
             let blockHeight: CGFloat
@@ -118,6 +121,19 @@ public final class LazyLayout {
             } else if block.tableRow != nil {
                 // Rows are usually one line tall; exact shaping corrects.
                 blockHeight = slotHeight + metrics.tableCellPadding.height * 2
+            } else if block.kind == .diagram, let info = block.diagram,
+                      info.naturalSizePts.width > 0 {
+                // Pure arithmetic — the "estimate" is already the exact height.
+                blockHeight = diagramDisplaySize(
+                    info, indent: indent, metrics: metrics, contentWidth: contentWidth
+                ).height + padding * 2
+            } else if block.kind == .diagram {
+                // Pending diagram (no raster yet): the loading-skeleton
+                // height — same arithmetic as exact shaping, so skeletons
+                // never need an anchored correction either.
+                blockHeight = diagramSkeletonHeight(
+                    for: block, slotHeight: slotHeight, metrics: metrics
+                )
             } else {
                 // UTF-8 length as the char-count proxy (O(1) per run): CJK
                 // over-counts bytes but is ~2× wide, so it roughly cancels.
@@ -125,7 +141,7 @@ public final class LazyLayout {
                 var hardBreaks = 0
                 for run in block.runs {
                     units += run.text.utf8.count
-                    if block.kind == .codeBlock {
+                    if block.kind == .codeBlock || block.kind == .diagram {
                         hardBreaks += run.text.utf8.reduce(into: 0) { if $1 == 0x0A { $0 += 1 } }
                     } else if run.text == "\n" {
                         hardBreaks += 1
@@ -176,8 +192,15 @@ public final class LazyLayout {
         if block.tableRow != nil {
             return shapeTableRowExact(index)
         }
+        if block.kind == .diagram {
+            if let info = block.diagram, info.naturalSizePts.width > 0 {
+                return shapeDiagramExact(index, info: info)
+            }
+            return shapeDiagramSkeleton(index)
+        }
         let indent = CGFloat(block.indentLevel) * metrics.indentWidth
-        let padding = block.kind == .codeBlock ? metrics.codeBlockPadding : 0
+        let padding = block.kind == .codeBlock || block.kind == .diagram
+            ? metrics.codeBlockPadding : 0
         let textWidth = max(40, contentWidth - indent - padding * 2)
         let shaped = shapeBlock(block, fonts: fonts, width: textWidth, scale: scale)
 
@@ -206,10 +229,125 @@ public final class LazyLayout {
             shaped: shaped,
             blockHeightPts: blockHeight,
             textInsetPts: CGPoint(x: indent + padding, y: padding),
-            backgrounds: backgrounds
+            backgrounds: backgrounds,
+            diagram: nil
         )
         let composite = compositeHeight(index: index, blockHeight: blockHeight)
         return CGFloat(tree.setExact(index, height: Double(composite)))
+    }
+
+    /// `.diagram` geometry is pure arithmetic over the FlatBlock's DiagramInfo
+    /// — no shaping, no I/O — so eviction and reflow rebuild it synchronously
+    /// and replaceBlock can measure the swap up front. No background quad:
+    /// diagram rasters carry their own background/ink. The shaped text is
+    /// empty; the block's runs/spans still hold the mermaid source for copy.
+    private func shapeDiagramExact(_ index: Int, info: DiagramInfo) -> CGFloat {
+        let block = document.blocks[index]
+        let indent = CGFloat(block.indentLevel) * metrics.indentWidth
+        let padding = metrics.codeBlockPadding
+        let display = Self.diagramDisplaySize(
+            info, indent: indent, metrics: metrics, contentWidth: contentWidth
+        )
+        let blockHeight = display.height + padding * 2
+
+        var backgrounds: [BackgroundQuad] = []
+        appendQuoteBars(for: block, at: index, blockHeight: blockHeight, into: &backgrounds)
+
+        cache[index] = CachedBlock(
+            shaped: .empty,
+            blockHeightPts: blockHeight,
+            textInsetPts: CGPoint(x: indent + padding, y: padding),
+            backgrounds: backgrounds,
+            diagram: PlacedDiagram(
+                imageKey: info.imageKey,
+                rectPts: CGRect(
+                    x: indent + padding, y: padding,
+                    width: display.width, height: display.height
+                )
+            )
+        )
+        let composite = compositeHeight(index: index, blockHeight: blockHeight)
+        return CGFloat(tree.setExact(index, height: Double(composite)))
+    }
+
+    /// Pending diagram: a loading skeleton — code-block chrome plus ghost
+    /// nodes — in place of the source text, so mermaid fences never flash
+    /// code before the raster (or the code-block fallback) swaps in. Same
+    /// purity contract as shapeDiagramExact: everything derives from the
+    /// FlatBlock, so eviction and reflow rebuild it synchronously.
+    private func shapeDiagramSkeleton(_ index: Int) -> CGFloat {
+        let block = document.blocks[index]
+        let indent = CGFloat(block.indentLevel) * metrics.indentWidth
+        let padding = metrics.codeBlockPadding
+        let slotHeight = fonts.lineSlot(for: .code).height
+        let blockHeight = Self.diagramSkeletonHeight(
+            for: block, slotHeight: slotHeight, metrics: metrics
+        )
+        let textWidth = max(40, contentWidth - indent - padding * 2)
+
+        var backgrounds: [BackgroundQuad] = [BackgroundQuad(
+            rectPts: CGRect(x: indent, y: 0, width: max(0, contentWidth - indent), height: blockHeight),
+            color: .codeBackground
+        )]
+        // Ghost nodes suggesting a small flowchart; quads in one buffer draw
+        // in array order, so these sit above the base rect.
+        let inner = blockHeight - padding * 2
+        func ghost(centerX: CGFloat, centerY: CGFloat, width: CGFloat) {
+            backgrounds.append(BackgroundQuad(
+                rectPts: CGRect(
+                    x: indent + padding + (centerX - width / 2) * textWidth,
+                    y: padding + (centerY - 0.08) * inner,
+                    width: width * textWidth,
+                    height: 0.16 * inner
+                ),
+                color: .diagramSkeleton
+            ))
+        }
+        ghost(centerX: 0.50, centerY: 0.18, width: 0.32)
+        ghost(centerX: 0.28, centerY: 0.72, width: 0.26)
+        ghost(centerX: 0.72, centerY: 0.72, width: 0.26)
+        appendQuoteBars(for: block, at: index, blockHeight: blockHeight, into: &backgrounds)
+
+        cache[index] = CachedBlock(
+            shaped: .empty,
+            blockHeightPts: blockHeight,
+            textInsetPts: CGPoint(x: indent + padding, y: padding),
+            backgrounds: backgrounds,
+            diagram: nil
+        )
+        let composite = compositeHeight(index: index, blockHeight: blockHeight)
+        return CGFloat(tree.setExact(index, height: Double(composite)))
+    }
+
+    /// Skeleton height: a rough proxy from the fence's line count, clamped so
+    /// tiny and huge sources both get a plausible box. Pure arithmetic shared
+    /// by estimation and exact shaping, so the only anchored correction a
+    /// mermaid block ever causes is the raster (or fallback) swap itself.
+    private static func diagramSkeletonHeight(
+        for block: FlatBlock, slotHeight: CGFloat, metrics: Metrics
+    ) -> CGFloat {
+        var hardBreaks = 0
+        for run in block.runs {
+            hardBreaks += run.text.utf8.reduce(into: 0) { if $1 == 0x0A { $0 += 1 } }
+        }
+        let lines = min(max(hardBreaks + 1, 6), 14)
+        return CGFloat(lines) * slotHeight + metrics.codeBlockPadding * 2
+    }
+
+    /// Display size of a diagram raster: natural width capped at the available
+    /// text width, height following the aspect ratio. Estimation, exact
+    /// shaping, and replaceBlock all route through this so heights agree
+    /// exactly (a diagram estimate never needs an anchored correction).
+    private static func diagramDisplaySize(
+        _ info: DiagramInfo, indent: CGFloat, metrics: Metrics, contentWidth: CGFloat
+    ) -> CGSize {
+        let padding = metrics.codeBlockPadding
+        let textWidth = max(40, contentWidth - indent - padding * 2)
+        let width = min(info.naturalSizePts.width, textWidth)
+        return CGSize(
+            width: width,
+            height: width * info.naturalSizePts.height / info.naturalSizePts.width
+        )
     }
 
     private func shapeTableRowExact(_ index: Int) -> CGFloat {
@@ -248,7 +386,8 @@ public final class LazyLayout {
             shaped: shaped,
             blockHeightPts: shaped.heightPts,
             textInsetPts: CGPoint(x: indent, y: 0),
-            backgrounds: backgrounds
+            backgrounds: backgrounds,
+            diagram: nil
         )
         let composite = compositeHeight(index: index, blockHeight: shaped.heightPts)
         return CGFloat(tree.setExact(index, height: Double(composite)))
@@ -371,6 +510,21 @@ public final class LazyLayout {
         cache.removeValue(forKey: index)
     }
 
+    /// Replace a block wholesale (e.g. code placeholder → diagram) and
+    /// re-measure it. Mutates the document copy, drops the shaped cache entry,
+    /// writes the new exact height via the geometry tree, and returns the
+    /// scroll adjustment: the height delta if the block sits strictly above
+    /// the block containing `anchorY`, else 0. Mirrors prepare()'s anchoring
+    /// contract; the caller adds the result to its scroll offset.
+    public func replaceBlock(at index: Int, with block: FlatBlock, anchorY: CGFloat) -> CGFloat {
+        guard document.blocks.indices.contains(index) else { return 0 }
+        let anchorIndex = tree.blockIndex(at: Double(max(0, anchorY)))
+        document.blocks[index] = block
+        cache.removeValue(forKey: index)
+        let delta = shapeExact(index)
+        return index < anchorIndex ? delta : 0
+    }
+
     private func compositeHeight(index: Int, blockHeight: CGFloat) -> CGFloat {
         let block = document.blocks[index]
         let before = index == 0 ? 0 : spacingBefore(block, metrics: metrics)
@@ -407,7 +561,7 @@ public final class LazyLayout {
         let cached = cache[index]!
         let block = document.blocks[index]
         let before = index == 0 ? 0 : spacingBefore(block, metrics: metrics)
-        return BlockLayout(
+        var layout = BlockLayout(
             flatIndex: index,
             id: block.id,
             kind: block.kind,
@@ -417,6 +571,8 @@ public final class LazyLayout {
             backgrounds: cached.backgrounds,
             shaped: cached.shaped
         )
+        layout.diagram = cached.diagram
+        return layout
     }
 
     public func blockIndex(at y: CGFloat) -> Int {

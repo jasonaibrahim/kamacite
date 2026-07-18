@@ -24,6 +24,15 @@ change is benchmarked, and regressions need justification.
 
 Plus: 120Hz scrolling; layout/GPU/atlas memory proportional to viewport, not document.
 
+These budgets are machine-enforced. `make check` runs the unit tests plus a perf
+gate (`bench/gate.py`) that holds cold first-pixel p50 per corpus and scroll-frame
+p95 to the ceilings in `bench/baseline.json` — ceilings sit well below the product
+budgets, at measured-on-this-machine numbers plus noise headroom, so a change that
+merely *approaches* the budget still reads as the regression it is. Run it before
+every PR. Raising a ceiling is allowed only as a deliberate trade: the same change
+must append a justification entry to the baseline's `revisions` log (the gate
+rejects raises without one), and review approves it.
+
 ## Building
 
 Prerequisites: Xcode 26+, [`xcodegen`](https://github.com/yonaskolb/XcodeGen)
@@ -34,6 +43,7 @@ make build      # xcodegen generate + xcodebuild (Release)
 make run        # launch the app
 make test       # engine unit tests (headless, no app build)
 make bench      # cold-launch benchmark against the corpus
+make check      # pre-PR suite: unit tests + perf regression gate (bench/baseline.json)
 make install    # copy to /Applications and symlink the `kama` CLI onto PATH
 make dev-link   # symlink the CLI against the build products (auto-updates per build)
 ```

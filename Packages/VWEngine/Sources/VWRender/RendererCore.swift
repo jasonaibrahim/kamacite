@@ -13,6 +13,7 @@ public final class RendererCore: @unchecked Sendable {
         let solid: MTLRenderPipelineState
         let gray: MTLRenderPipelineState
         let color: MTLRenderPipelineState
+        let image: MTLRenderPipelineState
         let pill: MTLRenderPipelineState
     }
 
@@ -74,6 +75,7 @@ public final class RendererCore: @unchecked Sendable {
             solid: try pipeline(vertex: "solid_vertex", fragment: "solid_fragment"),
             gray: try pipeline(vertex: "glyph_vertex", fragment: "glyph_fragment_gray"),
             color: try pipeline(vertex: "glyph_vertex", fragment: "glyph_fragment_color"),
+            image: try pipeline(vertex: "glyph_vertex", fragment: "image_fragment"),
             pill: try pipeline(vertex: "pill_vertex", fragment: "pill_fragment")
         )
     }

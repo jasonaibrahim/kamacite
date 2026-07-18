@@ -31,6 +31,10 @@ targets:
       - App/Sources
       - path: App/Resources/Kamacite.icns
         buildPhase: resources
+      - path: App/Resources/mermaid.min.js
+        buildPhase: resources
+      - path: App/Resources/mermaid.LICENSE
+        buildPhase: resources
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.xylophonexyz.kamacite

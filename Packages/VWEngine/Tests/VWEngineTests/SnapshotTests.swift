@@ -90,6 +90,25 @@ CACHE_SIZE = 0x400  # 1 KiB
 ```
 """
 
+private let goldenMermaidSource = """
+graph TD
+    A[Start] --> B{Build?}
+    B -->|yes| C[Ship it]
+    B -->|no| D[Fix first]
+"""
+
+private let goldenMermaidMarkdown = """
+### Mermaid
+
+Paragraph before the fence — the pending state shows a loading skeleton.
+
+```mermaid
+\(goldenMermaidSource)
+```
+
+Paragraph after the fence proves flow resumes below the raster.
+"""
+
 @Suite struct SnapshotTests {
     @Test @MainActor func goldenDark() throws {
         try assertSnapshot(name: "golden-dark", theme: .dark)
@@ -117,11 +136,48 @@ CACHE_SIZE = 0x400  # 1 KiB
         )
     }
 
+    /// A mermaid fence before the session swap: the pending-diagram loading
+    /// skeleton (code-block chrome + ghost nodes, no source text).
+    @Test @MainActor func goldenMermaidPlaceholder() throws {
+        try assertSnapshot(
+            name: "golden-mermaid-placeholder-dark", theme: .dark,
+            markdown: goldenMermaidMarkdown
+        )
+    }
+
+    /// After the session swap: `kind == .diagram` + DiagramInfo (the same
+    /// transform applyDiagram performs), raster resolved through the
+    /// diagramTextures store and drawn as a textured quad. The stand-in
+    /// raster is programmatic fills — no text — so the golden is
+    /// toolchain-stable.
+    @Test @MainActor func goldenMermaidSwapped() throws {
+        let naturalSize = CGSize(width: 300, height: 180)
+        let imageKey = diagramImageKey(source: goldenMermaidSource, isDark: true, pixelScale: 2)
+        try assertSnapshot(
+            name: "golden-mermaid-swapped-dark", theme: .dark,
+            markdown: goldenMermaidMarkdown,
+            transform: { document in
+                for index in document.blocks.indices
+                where isMermaidLanguage(document.blocks[index].codeLanguage) {
+                    document.blocks[index].kind = .diagram
+                    document.blocks[index].diagram = DiagramInfo(
+                        imageKey: imageKey, naturalSizePts: naturalSize
+                    )
+                }
+            },
+            diagramTextures: { device in
+                // 2× the natural point size: the quad samples 1:1 at scale 2.
+                [imageKey: try makeDiagramTexture(device: device, width: 600, height: 360)]
+            }
+        )
+    }
+
     @MainActor
     private func assertSnapshot(
         name: String, theme: Theme,
         markdown: String = goldenMarkdown,
-        transform: ((inout FlatDocument) -> Void)? = nil
+        transform: ((inout FlatDocument) -> Void)? = nil,
+        diagramTextures: ((MTLDevice) throws -> [UInt64: MTLTexture])? = nil
     ) throws {
         guard MTLCreateSystemDefaultDevice() != nil else {
             // Headless CI without a GPU: nothing to verify.
@@ -143,10 +199,13 @@ CACHE_SIZE = 0x400  # 1 KiB
         let height = Int((layout.contentHeightPts + insetPts * 2) * scale)
 
         let renderer = try DocumentRenderer(scale: scale)
+        // Built against the renderer's device — textures aren't portable
+        // across MTLDevice instances.
+        let textures = try diagramTextures?(renderer.device) ?? [:]
         let texture = renderer.renderOffscreen(
             layout: layout, theme: theme,
             originPts: CGPoint(x: insetPts, y: insetPts),
-            scale: scale, width: width, height: height
+            scale: scale, diagramTextures: textures, width: width, height: height
         )
         let actual = DocumentRenderer.bgraBytes(from: texture)
 
@@ -180,6 +239,59 @@ CACHE_SIZE = 0x400  # 1 KiB
             Issue.record("\(name): \(String(format: "%.3f%%", fraction * 100)) of bytes differ (>3 levels); wrote .actual.png")
         }
     }
+}
+
+// MARK: - Deterministic diagram raster
+
+/// Diagram stand-in: two "node" panels, an "edge" bar, and a stepped color
+/// strip — axis-aligned opaque fills on integral pixel edges with AA off, so
+/// the bytes are identical across toolchains (unlike anything CoreText
+/// touches). Drawn in the renderer's texel format (premultipliedFirst +
+/// byteOrder32Little sRGB) and uploaded as .bgra8Unorm, the same recipe the
+/// viewer's texture upload uses.
+private func makeDiagramTexture(device: MTLDevice, width: Int, height: Int) throws -> MTLTexture {
+    var pixels = [UInt8](repeating: 0, count: width * height * 4)
+    try pixels.withUnsafeMutableBytes { raw in
+        guard let context = CGContext(
+            data: raw.baseAddress, width: width, height: height,
+            bitsPerComponent: 8, bytesPerRow: width * 4,
+            space: CGColorSpace(name: CGColorSpace.sRGB)!,
+            bitmapInfo: CGBitmapInfo.byteOrder32Little.rawValue | CGImageAlphaInfo.premultipliedFirst.rawValue
+        ) else { throw SnapshotError.encode("diagram-texture") }
+        context.setShouldAntialias(false)
+        // 20×20 unit grid keeps every edge on a whole pixel for the golden's
+        // 600×360 (units of 30×18).
+        let ux = CGFloat(width / 20), uy = CGFloat(height / 20)
+        context.setFillColor(CGColor(srgbRed: 0.13, green: 0.15, blue: 0.20, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: CGFloat(width), height: CGFloat(height)))
+        context.setFillColor(CGColor(srgbRed: 0.36, green: 0.62, blue: 0.93, alpha: 1))
+        context.fill(CGRect(x: ux * 2, y: uy * 11, width: ux * 6, height: uy * 6))
+        context.setFillColor(CGColor(srgbRed: 0.95, green: 0.61, blue: 0.30, alpha: 1))
+        context.fill(CGRect(x: ux * 12, y: uy * 3, width: ux * 6, height: uy * 6))
+        context.setFillColor(CGColor(srgbRed: 0.80, green: 0.82, blue: 0.86, alpha: 1))
+        context.fill(CGRect(x: ux * 8, y: uy * 13, width: ux * 4, height: uy))
+        for band in 0..<10 {
+            let t = CGFloat(band) / 9
+            context.setFillColor(CGColor(srgbRed: 0.2 + 0.6 * t, green: 0.9 - 0.5 * t, blue: 0.5, alpha: 1))
+            context.fill(CGRect(x: ux * CGFloat(band) * 2, y: 0, width: ux * 2, height: uy))
+        }
+    }
+
+    let descriptor = MTLTextureDescriptor.texture2DDescriptor(
+        pixelFormat: .bgra8Unorm, width: width, height: height, mipmapped: false
+    )
+    descriptor.usage = .shaderRead
+    descriptor.storageMode = .shared
+    guard let texture = device.makeTexture(descriptor: descriptor) else {
+        throw SnapshotError.encode("diagram-texture")
+    }
+    pixels.withUnsafeBytes { raw in
+        texture.replace(
+            region: MTLRegionMake2D(0, 0, width, height), mipmapLevel: 0,
+            withBytes: raw.baseAddress!, bytesPerRow: width * 4
+        )
+    }
+    return texture
 }
 
 // MARK: - PNG IO (BGRA8, byteOrder32Little + premultipliedFirst)

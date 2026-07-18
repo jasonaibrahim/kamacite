@@ -19,3 +19,7 @@ bench/corpus/huge.md
 bench/results/
 
 .DS_Store
+
+# Snapshot-test diff artifacts (written beside goldens on mismatch/record)
+*.actual.png
+__pycache__/

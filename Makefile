@@ -16,8 +16,8 @@ VERSION        := $(shell sed -n 's/.*CFBundleShortVersionString: "\(.*\)"/\1/p'
 DIST           := dist
 DMG            := $(DIST)/Kamacite-$(VERSION).dmg
 
-.PHONY: generate build run test bench install dev-link clean spike spike-dump \
-        release sign dmg notarize
+.PHONY: generate build run test bench bench-gate check install dev-link clean \
+        spike spike-dump release sign dmg notarize
 
 generate:
 	$(XCODEGEN) generate
@@ -34,6 +34,16 @@ test:
 
 bench: build
 	bench/bench.sh $(APP)
+
+# Perf regression gate: holds cold first-pixel p50 and scroll-frame p95 to the
+# ceilings in bench/baseline.json. Raising a ceiling requires a documented
+# `revisions` entry in the same change — gate.py rejects raises without one.
+bench-gate: build
+	python3 bench/gate.py $(APP)
+
+# The full pre-PR suite: engine unit tests + the perf gate. A change that
+# fails `make check` either fixes its regression or justifies a new ceiling.
+check: test bench-gate
 
 install: build
 	ditto $(APP) /Applications/Kamacite.app

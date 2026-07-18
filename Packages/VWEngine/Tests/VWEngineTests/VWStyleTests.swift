@@ -126,3 +126,68 @@ import VWParse
         #expect(doc.blocks[0].runs[0].color == .secondaryText)
     }
 }
+
+@Suite struct DiagramTests {
+    @Test func mermaidLanguageDetection() {
+        let cases: [(language: String?, expected: Bool)] = [
+            ("mermaid", true),
+            ("Mermaid", true),
+            ("MERMAID", true),
+            ("mermaid theme=forest", true),
+            (" mermaid ", true),
+            ("swift", false),
+            ("mermaidjs", false),
+            ("", false),
+            (" ", false),
+            (nil, false),
+        ]
+        for (language, expected) in cases {
+            #expect(isMermaidLanguage(language) == expected, "\(String(describing: language))")
+        }
+    }
+
+    /// Mermaid fences flatten as PENDING diagrams (`.diagram`, no
+    /// DiagramInfo): the loading skeleton shows from first paint, never a
+    /// flash of source. Runs/language/spans keep the fence source for the
+    /// renderer, copy paths, and the code-block fallback.
+    @Test func mermaidFenceFlattensToPendingDiagram() {
+        let doc = flatten(parseMarkdown("```mermaid\ngraph TD; A-->B\n```"))
+        #expect(doc.blocks.count == 1)
+        #expect(doc.blocks[0].kind == .diagram)
+        #expect(doc.blocks[0].codeLanguage == "mermaid")
+        #expect(doc.blocks[0].diagram == nil)
+        #expect(doc.blocks[0].runs[0].text == "graph TD; A-->B")
+    }
+
+    /// A fence past the 64KB chunking limit fragments and can never render —
+    /// it must stay a code block from the start.
+    @Test func oversizedMermaidFenceStaysACodeBlock() {
+        var body = "```mermaid\ngraph TD\n"
+        var i = 0
+        while body.utf16.count <= 70_000 {
+            body += "  N\(i) --> N\(i + 1)\n"
+            i += 1
+        }
+        body += "```"
+        let doc = flatten(parseMarkdown(body))
+        let mermaid = doc.blocks.filter { isMermaidLanguage($0.codeLanguage) }
+        #expect(mermaid.count >= 2)
+        #expect(mermaid.allSatisfy { $0.kind == .codeBlock })
+    }
+
+    @Test func imageKeyIsDeterministic() {
+        let key = diagramImageKey(source: "graph TD; A-->B", isDark: true, pixelScale: 2)
+        #expect(diagramImageKey(source: "graph TD; A-->B", isDark: true, pixelScale: 2) == key)
+        // Source and theme both participate in identity.
+        #expect(diagramImageKey(source: "graph TD; A-->C", isDark: true, pixelScale: 2) != key)
+        #expect(diagramImageKey(source: "graph TD; A-->B", isDark: false, pixelScale: 2) != key)
+    }
+
+    @Test func imageKeyBucketsPixelScaleAtQuarterResolution() {
+        let key = diagramImageKey(source: "graph TD; A-->B", isDark: true, pixelScale: 2)
+        // 2.05 rounds into the same quarter-scale bucket as 2.0…
+        #expect(diagramImageKey(source: "graph TD; A-->B", isDark: true, pixelScale: 2.05) == key)
+        // …while 2.25 lands in the next bucket.
+        #expect(diagramImageKey(source: "graph TD; A-->B", isDark: true, pixelScale: 2.25) != key)
+    }
+}

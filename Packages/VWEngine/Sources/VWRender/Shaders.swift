@@ -89,6 +89,18 @@ fragment float4 glyph_fragment_color(Varyings in [[stage_in]],
     return atlas.sample(atlasSampler, in.uv) * in.color.a;
 }
 
+// Diagram rasters draw at their display size, which need not match the
+// texture 1:1 (width caps, zoom drift) — linear filtering absorbs the
+// resample. Separate sampler on purpose: atlasSampler's nearest is
+// load-bearing for glyph exactness.
+constexpr sampler imageSampler(coord::normalized, address::clamp_to_edge, filter::linear);
+
+fragment float4 image_fragment(Varyings in [[stage_in]],
+                               texture2d<float> atlas [[texture(0)]]) {
+    // Raster texels are premultiplied BGRA straight from CoreGraphics.
+    return atlas.sample(imageSampler, in.uv) * in.color.a;
+}
+
 fragment float4 solid_fragment(Varyings in [[stage_in]]) {
     return float4(in.color.rgb * in.color.a, in.color.a);
 }

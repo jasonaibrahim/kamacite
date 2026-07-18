@@ -5,6 +5,7 @@ import VWViewer
 final class DocumentViewController: NSViewController {
     let document: Document?
     private(set) var engineView: DocumentEngineView?
+    private var checkedForMermaid = false
 
     init(document: Document?) {
         self.document = document
@@ -36,8 +37,23 @@ final class DocumentViewController: NSViewController {
                 NSWorkspace.shared.open(url)
             }
         }
+        engine.diagramRenderer = MermaidRenderer.shared
         engineView = engine
         view = engine
+    }
+
+    /// Post-present, off the first-frame path: if the document contains a
+    /// mermaid fence, pre-warm the WebKit rasterizer so the first visible
+    /// diagram pays only its own render. The byte scan runs off-main — the
+    /// data may be a 100MB mmap.
+    override func viewDidAppear() {
+        super.viewDidAppear()
+        guard !checkedForMermaid, let document else { return }
+        checkedForMermaid = true
+        Task.detached(priority: .utility) { [data = document.data] in
+            guard data.range(of: Data("```mermaid".utf8)) != nil else { return }
+            await MermaidRenderer.shared.warmUp()
+        }
     }
 
     /// Follows the system appearance at open; live flipping is P8.
