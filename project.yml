@@ -53,8 +53,8 @@ targets:
         CFBundleName: Kamacite
         CFBundleDisplayName: Kamacite
         CFBundleIconFile: Kamacite
-        CFBundleShortVersionString: "1.0.0-beta.1"
-        CFBundleVersion: "1"
+        CFBundleShortVersionString: "1.0.0-beta.2"
+        CFBundleVersion: "2"
         LSMinimumSystemVersion: "15.0"
         LSApplicationCategoryType: public.app-category.productivity
         NSPrincipalClass: NSApplication
